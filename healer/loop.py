@@ -3,6 +3,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from rich.console import Console
+from rich.panel import Panel
+
 from healer.agents.diagnoser import diagnose
 from healer.agents.fixer import generate_fix
 from healer.agents.reviewer import review_patch
@@ -12,15 +15,18 @@ from healer.tools import git, patcher
 from healer.tools.runner import run_tests
 
 logger = logging.getLogger(__name__)
+_console = Console()
 
 
 def run(state: HealerState) -> HealerState:
     logger.info("loop: start — target=%s cmd=%r max_cycles=%d", state.target_repo, state.test_command, state.max_cycles)
+    _console.print(Panel(f"[bold green]Self-Healer[/bold green]  target=[cyan]{state.target_repo}[/cyan]  max_cycles=[yellow]{state.max_cycles}[/yellow]"))
 
     git.ensure_git_repo(state.target_repo)
 
     while True:
         state.cycle += 1
+        _console.rule(f"[bold cyan]CYCLE {state.cycle} / {state.max_cycles}[/bold cyan]")
         logger.info("=== CYCLE %d / %d ===", state.cycle, state.max_cycles)
 
         # OBSERVE
@@ -28,10 +34,12 @@ def run(state: HealerState) -> HealerState:
         fingerprint = state.record_cycle_result(result.output, result.exit_code, result.failures)
 
         if result.exit_code == 0:
+            _console.print("[bold green]✓ All tests pass — SUCCESS[/bold green]")
             logger.info("loop: all tests pass — SUCCESS")
             state.status = "success"
             return state
 
+        _console.print(f"[red]✗ {len(result.failures)} failure(s) detected[/red]")
         logger.info("loop: %d failures detected", len(result.failures))
 
         # Check exit conditions before reasoning
@@ -66,6 +74,7 @@ def run(state: HealerState) -> HealerState:
             state.record_patch(patch.file_path, patch.unified_diff, f"REJECTED: {review.reason}")
             continue
 
+        _console.print(f"[green]✓ Reviewer approved (score={review.score}) — applying patch[/green]")
         logger.info("loop: reviewer approved (score=%d) — applying patch", review.score)
 
         try:
@@ -89,8 +98,10 @@ def run(state: HealerState) -> HealerState:
             commit_msg = f"[healer] cycle-{state.cycle}: {patch.rationale[:72]}"
             git.commit(state.target_repo, commit_msg)
             state.record_patch(patch.file_path, patch.unified_diff, patch.rationale)
+            _console.print(f"[green]↓ Progress: {prev_count} → {curr_count} failures[/green]")
             logger.info("loop: progress! failures %d → %d", prev_count, curr_count)
         else:
+            _console.print("[yellow]↔ No improvement — rolling back[/yellow]")
             logger.warning("loop: no improvement — rolling back")
             git.rollback_to(state.target_repo, sha_before)
             state.record_patch(patch.file_path, patch.unified_diff, f"NO_PROGRESS: {patch.rationale}")
@@ -103,5 +114,6 @@ def _escalate(state: HealerState, reason: str) -> HealerState:
     report = generate_report(state, reason)
     report_path = Path(state.target_repo) / "HEALER_ESCALATION.md"
     write_report(state, reason, str(report_path))
+    _console.print(Panel(f"[bold red]ESCALATED[/bold red]  reason=[yellow]{reason}[/yellow]\nReport: {report_path}"))
     logger.error("loop: ESCALATED — %s\nReport: %s\n%s", reason, report_path, report)
     return state
