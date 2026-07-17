@@ -89,7 +89,13 @@ REASON: one sentence"""
     response = _CLIENT.messages.create(
         model=_MODEL,
         max_tokens=512,
-        system="You are a code reviewer. Evaluate patches for correctness and scope. Be strict.",
+        system=[
+            {
+                "type": "text",
+                "text": "You are a code reviewer. Evaluate patches for correctness and scope. Be strict.",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
         messages=[{"role": "user", "content": prompt}],
     )
 
