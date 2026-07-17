@@ -35,7 +35,7 @@ def generate_fix(
     response = _CLIENT.messages.create(
         model=_MODEL,
         max_tokens=4096,
-        system=_SYSTEM_PROMPT,
+        system=[{"type": "text", "text": _SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": prompt}],
     )
 
