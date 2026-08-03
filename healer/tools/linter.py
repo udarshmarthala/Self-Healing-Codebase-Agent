@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -207,3 +209,24 @@ def run_lint(lint_command: str, target_repo: str, timeout: int = 120) -> LintRes
         len(combined),
     )
     return result
+
+
+def detect_lint_command(target_repo: str) -> str | None:
+    """Pick a lint command for the target repo, or None if nothing suitable is
+    installed. Python repos prefer ruff; JS/TS repos prefer eslint."""
+    repo = Path(target_repo)
+
+    is_python = any(
+        (repo / f).exists() for f in ("pyproject.toml", "setup.py", "setup.cfg", "requirements.txt")
+    )
+    is_js = (repo / "package.json").exists()
+
+    if is_python and shutil.which("ruff"):
+        return "ruff check ."
+    if is_js and shutil.which("npx"):
+        return "npx --no-install eslint ."
+    if is_python and shutil.which("mypy"):
+        return "mypy . --ignore-missing-imports"
+
+    logger.info("linter: no lint command detected for %s — lint signal disabled", target_repo)
+    return None
