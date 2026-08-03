@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
@@ -130,4 +131,45 @@ def parse_coverage_json(json_text: str) -> CoverageResult:
             path=path, statements=statements, missing_lines=sorted(missing)
         )
 
+    return result
+
+
+# term-missing row: "src/auth.py   45   6   87%   12-14, 20"
+_TERM_ROW_RE = re.compile(
+    r"^(?P<path>[\w./\\-]+\.\w+)\s+(?P<stmts>\d+)\s+(?P<miss>\d+)\s+(?:\d+%)(?:\s+(?P<lines>[\d,\s-]+))?$"
+)
+
+
+def _expand_ranges(spec: str) -> list[int]:
+    """"12-14, 20" -> [12, 13, 14, 20]. Branch markers like "18->20" are skipped."""
+    lines: list[int] = []
+    for chunk in spec.split(","):
+        chunk = chunk.strip()
+        if not chunk or "->" in chunk:
+            continue
+        if "-" in chunk:
+            start, _, end = chunk.partition("-")
+            if start.strip().isdigit() and end.strip().isdigit():
+                lines.extend(range(int(start), int(end) + 1))
+        elif chunk.isdigit():
+            lines.append(int(chunk))
+    return lines
+
+
+def parse_term_missing(output: str) -> CoverageResult:
+    """Parse the `--cov-report=term-missing` table. Least precise of the three
+    formats — used only when no machine-readable report was produced."""
+    result = CoverageResult(source="term")
+    for line in output.splitlines():
+        if line.strip().startswith("TOTAL"):
+            continue
+        m = _TERM_ROW_RE.match(line.strip())
+        if not m:
+            continue
+        missing = _expand_ranges(m.group("lines") or "")
+        result.files[m.group("path")] = FileCoverage(
+            path=m.group("path"),
+            statements=int(m.group("stmts")),
+            missing_lines=sorted(missing),
+        )
     return result
