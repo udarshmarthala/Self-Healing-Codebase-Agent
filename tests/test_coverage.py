@@ -7,6 +7,7 @@ from healer.tools.coverage import (
     FileCoverage,
     added_lines,
     build_coverage_command,
+    cleanup_artifacts,
     coverage_delta,
     measure,
     parse_cobertura_xml,
@@ -229,3 +230,15 @@ def test_measure_end_to_end(tmp_path):
 
 def test_measure_skips_non_pytest_suites(tmp_path):
     assert not measure("npm test", str(tmp_path)).available
+
+
+def test_measure_removes_its_artifacts(tmp_path):
+    (tmp_path / "mod.py").write_text("def used():\n    return 1\n")
+    (tmp_path / "test_mod.py").write_text("from mod import used\n\ndef test_used():\n    assert used() == 1\n")
+    measure(f"{sys.executable} -m pytest test_mod.py -p no:cacheprovider", str(tmp_path))
+    assert not (tmp_path / ".healer-coverage.json").exists()
+    assert not (tmp_path / ".coverage").exists()
+
+
+def test_cleanup_artifacts_is_safe_when_absent(tmp_path):
+    cleanup_artifacts(str(tmp_path))  # must not raise

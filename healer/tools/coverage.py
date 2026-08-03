@@ -216,6 +216,20 @@ def read_report(target_repo: str, report_path: str = _REPORT_FILENAME) -> Covera
     return CoverageResult(available=False, source="none")
 
 
+def cleanup_artifacts(target_repo: str, report_path: str = _REPORT_FILENAME) -> None:
+    """Delete the report and data files coverage leaves behind.
+
+    git.commit() stages with `git add -A`, so any artifact left in the target
+    repo would be committed into the user's history as healer noise.
+    """
+    for name in (report_path, ".coverage"):
+        artifact = Path(target_repo) / name
+        try:
+            artifact.unlink(missing_ok=True)
+        except OSError as e:  # pragma: no cover - filesystem-dependent
+            logger.warning("coverage: could not remove %s — %s", artifact, e)
+
+
 def measure(test_command: str, target_repo: str, timeout: int = 300) -> CoverageResult:
     """Run the test suite with coverage instrumentation and return the result.
 
@@ -254,6 +268,7 @@ def measure(test_command: str, target_repo: str, timeout: int = 300) -> Coverage
         if not result.available:
             logger.warning("coverage: no parseable report (exit_code=%d)", proc.returncode)
 
+    cleanup_artifacts(target_repo)
     logger.info("coverage: exit_code=%d %s", proc.returncode, result.summary())
     return result
 
