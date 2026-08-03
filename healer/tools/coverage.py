@@ -256,3 +256,48 @@ def measure(test_command: str, target_repo: str, timeout: int = 300) -> Coverage
 
     logger.info("coverage: exit_code=%d %s", proc.returncode, result.summary())
     return result
+
+
+# Coverage moves for reasons unrelated to the patch (a newly passing test
+# executes more lines), so only a drop beyond this margin counts as a decline.
+DROP_TOLERANCE = 0.02
+
+
+@dataclass
+class CoverageDelta:
+    before_rate: float
+    after_rate: float
+    files_declined: list[str] = field(default_factory=list)
+
+    @property
+    def rate_change(self) -> float:
+        return self.after_rate - self.before_rate
+
+    @property
+    def declined(self) -> bool:
+        return self.rate_change < -DROP_TOLERANCE
+
+    def summary(self) -> str:
+        arrow = "↑" if self.rate_change >= 0 else "↓"
+        return f"coverage {self.before_rate:.1%} → {self.after_rate:.1%} ({arrow}{abs(self.rate_change):.1%})"
+
+
+def coverage_delta(before: CoverageResult, after: CoverageResult) -> CoverageDelta:
+    """Compare two coverage runs. Unavailable measurements yield a no-op delta
+    so callers never act on a phantom drop."""
+    if not before.available or not after.available:
+        return CoverageDelta(before_rate=0.0, after_rate=0.0)
+
+    declined = []
+    for path, after_file in after.files.items():
+        before_file = before.get(path)
+        if before_file and after_file.rate < before_file.rate - DROP_TOLERANCE:
+            declined.append(path)
+
+    delta = CoverageDelta(
+        before_rate=before.rate,
+        after_rate=after.rate,
+        files_declined=sorted(declined),
+    )
+    logger.info("coverage: delta %s (declined=%s)", delta.summary(), delta.declined)
+    return delta
