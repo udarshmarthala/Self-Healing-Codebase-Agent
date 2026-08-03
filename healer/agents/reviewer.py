@@ -8,6 +8,7 @@ import anthropic
 
 from healer.agents.diagnoser import Diagnosis
 from healer.agents.fixer import Patch
+from healer.tools.linter import LintIssue, format_issues
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,12 @@ class ReviewResult:
     score: int  # 1-10
 
 
-def review_patch(patch: Patch, diagnosis: Diagnosis, target_repo: str) -> ReviewResult:
+def review_patch(
+    patch: Patch,
+    diagnosis: Diagnosis,
+    target_repo: str,
+    lint_issues: list[LintIssue] | None = None,
+) -> ReviewResult:
     logger.info("reviewer: reviewing patch for %s", patch.file_path)
 
     if not patch.unified_diff and not patch.full_content:
@@ -36,7 +42,7 @@ def review_patch(patch: Patch, diagnosis: Diagnosis, target_repo: str) -> Review
             score=0,
         )
 
-    result = _llm_review(patch, diagnosis)
+    result = _llm_review(patch, diagnosis, lint_issues or [])
     logger.info("reviewer: approved=%s score=%d reason=%s", result.approved, result.score, result.reason)
     return result
 
@@ -55,8 +61,13 @@ def _scope_guard(patch: Patch, diagnosis: Diagnosis) -> bool:
     return False
 
 
-def _llm_review(patch: Patch, diagnosis: Diagnosis) -> ReviewResult:
+def _llm_review(patch: Patch, diagnosis: Diagnosis, lint_issues: list[LintIssue]) -> ReviewResult:
     diff_display = patch.unified_diff or f"[full file replacement: {patch.file_path}]\n{patch.full_content or ''}"
+    lint_section = (
+        f"\n## Existing Lint Issues in the Patched File\n{format_issues(lint_issues)}\n"
+        if lint_issues
+        else ""
+    )
     prompt = f"""Review this patch for a failing test suite.
 
 ## Root Cause
@@ -75,11 +86,13 @@ def _llm_review(patch: Patch, diagnosis: Diagnosis) -> ReviewResult:
 
 ## Rationale
 {patch.rationale}
-
+{lint_section}
 Evaluate:
 1. Does this patch address the root cause?
 2. Does it stay within scope (only touching files related to failures)?
 3. Could it break other tests or introduce new bugs?
+4. Does it obviously introduce a new lint or type error (unused import, undefined
+   name, wrong type) on top of the issues already listed above?
 
 Respond in this exact format:
 APPROVED: yes/no
