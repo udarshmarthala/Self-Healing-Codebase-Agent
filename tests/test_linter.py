@@ -2,11 +2,34 @@ import textwrap
 
 from healer.tools.linter import (
     LintIssue,
+    LintResult,
+    detect_lint_command,
+    format_issues,
+    lint_delta,
     parse_eslint,
     parse_generic,
     parse_mypy,
     parse_ruff,
+    run_lint,
 )
+
+
+def test_parse_ruff_full_format():
+    output = textwrap.dedent("""
+        F401 [*] `os` imported but unused
+         --> src/auth.py:1:8
+          |
+        1 | import os
+          |        ^^
+        help: Remove unused import: `os`
+
+        Found 1 error.
+    """)
+    issues = parse_ruff(output)
+    assert len(issues) == 1
+    assert issues[0].file == "src/auth.py"
+    assert issues[0].line == 1
+    assert issues[0].code == "F401"
 
 
 def test_parse_ruff_basic():
@@ -78,3 +101,93 @@ def test_issue_key_ignores_line_number():
     a = LintIssue(file="a.py", line=10, code="F401", message="unused")
     b = LintIssue(file="a.py", line=99, code="F401", message="unused")
     assert a.key == b.key
+
+
+def _issue(code="F401", file="a.py", line=1, msg="unused", severity="error"):
+    return LintIssue(file=file, line=line, code=code, message=msg, severity=severity)
+
+
+def _result(issues):
+    return LintResult(exit_code=1 if issues else 0, output="", issues=issues, tool="ruff")
+
+
+def test_lint_delta_detects_introduced_issue():
+    before = _result([_issue("F401")])
+    after = _result([_issue("F401"), _issue("E501", msg="line too long")])
+    delta = lint_delta(before, after)
+    assert [i.code for i in delta.introduced] == ["E501"]
+    assert delta.resolved == []
+    assert delta.is_regression
+
+
+def test_lint_delta_detects_resolved_issue():
+    delta = lint_delta(_result([_issue("F401")]), _result([]))
+    assert [i.code for i in delta.resolved] == ["F401"]
+    assert not delta.is_regression
+
+
+def test_lint_delta_ignores_line_shift():
+    before = _result([_issue(line=10)])
+    after = _result([_issue(line=42)])
+    delta = lint_delta(before, after)
+    assert delta.introduced == []
+    assert delta.resolved == []
+    assert not delta.is_regression
+
+
+def test_lint_delta_warning_only_is_not_regression():
+    after = _result([_issue("E501", severity="warning", msg="long")])
+    assert not lint_delta(_result([]), after).is_regression
+
+
+def test_run_lint_reports_issues(tmp_path):
+    (tmp_path / "bad.py").write_text("import os\n")
+    result = run_lint("ruff check . --select F401 --no-cache", str(tmp_path))
+    assert result.tool == "ruff"
+    assert result.exit_code != 0
+    assert any(i.code == "F401" for i in result.issues)
+
+
+def test_run_lint_clean_repo(tmp_path):
+    (tmp_path / "ok.py").write_text("x = 1\n")
+    result = run_lint("ruff check . --select F401 --no-cache", str(tmp_path))
+    assert result.exit_code == 0
+    assert result.issues == []
+    assert "clean" in result.summary()
+
+
+def test_run_lint_missing_tool_is_not_fatal(tmp_path):
+    result = run_lint("definitely-not-a-real-linter .", str(tmp_path))
+    assert result.issues == []
+    assert result.exit_code != 0
+
+
+def test_run_lint_timeout(tmp_path):
+    result = run_lint("sleep 5", str(tmp_path), timeout=1)
+    assert result.output == "TIMEOUT"
+    assert result.issues == []
+
+
+def test_detect_lint_command_python_repo(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    assert detect_lint_command(str(tmp_path)) == "ruff check ."
+
+
+def test_detect_lint_command_unknown_repo(tmp_path):
+    assert detect_lint_command(str(tmp_path)) is None
+
+
+def test_issues_in_filters_by_file():
+    result = _result([_issue(file="src/auth.py"), _issue(file="src/db.py", code="E501")])
+    assert [i.file for i in result.issues_in(["auth.py"])] == ["src/auth.py"]
+
+
+def test_format_issues_truncates():
+    issues = [_issue(line=n, msg=f"m{n}") for n in range(30)]
+    text = format_issues(issues, limit=5)
+    assert text.count("\n") == 5
+    assert "and 25 more" in text
+
+
+def test_format_issues_empty():
+    assert format_issues([]) == "(none)"

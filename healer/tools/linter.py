@@ -57,26 +57,39 @@ class LintResult:
         return f"{self.tool}: {len(self.issues)} issue(s), {self.error_count} error(s)"
 
 
-# ruff: "src/auth.py:12:1: F401 [*] `os` imported but unused"
-_RUFF_RE = re.compile(
+# ruff concise format: "src/auth.py:12:1: F401 [*] `os` imported but unused"
+_RUFF_CONCISE_RE = re.compile(
     r"^(?P<file>[^\s:][^:]*):(?P<line>\d+):(?P<col>\d+):\s+(?P<code>[A-Z]+\d+)\s+(?:\[\*\]\s+)?(?P<msg>.+)$",
+    re.MULTILINE,
+)
+
+# ruff full format (the default since ruff 0.9):
+#   F401 [*] `os` imported but unused
+#    --> src/auth.py:1:8
+_RUFF_FULL_RE = re.compile(
+    r"^(?P<code>[A-Z]+\d+)\s+(?:\[\*\]\s+)?(?P<msg>.+)\n\s*-->\s+(?P<file>[^\s:]+):(?P<line>\d+):(?P<col>\d+)",
     re.MULTILINE,
 )
 
 
 def parse_ruff(output: str) -> list[LintIssue]:
+    """Parse both ruff output styles: the full diagnostic format (default since
+    ruff 0.9) and the older concise file:line:col form."""
     issues: list[LintIssue] = []
-    for m in _RUFF_RE.finditer(output):
-        issues.append(
-            LintIssue(
-                file=m.group("file").strip(),
-                line=int(m.group("line")),
-                code=m.group("code"),
-                message=m.group("msg").strip(),
-                severity="error",
-                tool="ruff",
+    for regex in (_RUFF_FULL_RE, _RUFF_CONCISE_RE):
+        for m in regex.finditer(output):
+            issues.append(
+                LintIssue(
+                    file=m.group("file").strip(),
+                    line=int(m.group("line")),
+                    code=m.group("code"),
+                    message=m.group("msg").strip(),
+                    severity="error",
+                    tool="ruff",
+                )
             )
-        )
+        if issues:
+            break
     return issues
 
 
