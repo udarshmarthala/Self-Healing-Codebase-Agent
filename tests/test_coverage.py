@@ -1,12 +1,20 @@
 import json
+import sys
 import textwrap
 
 from healer.tools.coverage import (
     CoverageResult,
     FileCoverage,
+    added_lines,
+    build_coverage_command,
+    coverage_delta,
+    measure,
     parse_cobertura_xml,
     parse_coverage_json,
     parse_term_missing,
+    read_report,
+    supports_coverage,
+    untested_patch_lines,
 )
 
 COBERTURA = """<?xml version="1.0" ?>
@@ -105,3 +113,119 @@ def test_result_get_matches_by_path_suffix():
     result = CoverageResult(files={"src/auth.py": FileCoverage("src/auth.py", 5)})
     assert result.get("auth.py") is not None
     assert result.get("other.py") is None
+
+
+def _result(path="src/a.py", statements=10, missing=()):
+    return CoverageResult(
+        files={path: FileCoverage(path=path, statements=statements, missing_lines=list(missing))}
+    )
+
+
+def test_supports_coverage_only_for_pytest():
+    assert supports_coverage("pytest -v")
+    assert not supports_coverage("npm test")
+
+
+def test_build_coverage_command_adds_flags():
+    cmd = build_coverage_command("pytest -v")
+    assert "--cov=." in cmd
+    assert "--cov-report=json:.healer-coverage.json" in cmd
+
+
+def test_build_coverage_command_respects_existing_cov_flag():
+    cmd = build_coverage_command("pytest --cov=src")
+    assert cmd.count("--cov=") == 1
+    assert "--cov=src" in cmd
+
+
+def test_build_coverage_command_passes_through_non_pytest():
+    assert build_coverage_command("npm test") == "npm test"
+
+
+def test_coverage_delta_reports_improvement():
+    delta = coverage_delta(_result(missing=[1, 2, 3, 4]), _result(missing=[1]))
+    assert delta.rate_change > 0
+    assert not delta.declined
+    assert "↑" in delta.summary()
+
+
+def test_coverage_delta_flags_decline():
+    delta = coverage_delta(_result(missing=[1]), _result(missing=[1, 2, 3, 4]))
+    assert delta.declined
+    assert delta.files_declined == ["src/a.py"]
+
+
+def test_coverage_delta_tolerates_small_drop():
+    before = _result(statements=100, missing=[])
+    after = _result(statements=100, missing=[1])
+    assert not coverage_delta(before, after).declined
+
+
+def test_coverage_delta_is_noop_when_unavailable():
+    delta = coverage_delta(CoverageResult(available=False), _result())
+    assert delta.rate_change == 0.0
+    assert not delta.declined
+
+
+DIFF = """--- a/src/a.py
++++ b/src/a.py
+@@ -10,3 +10,5 @@
+ context
++added_one
++added_two
+ context
+-removed
+"""
+
+
+def test_added_lines_maps_diff_to_post_patch_numbers():
+    assert added_lines(DIFF) == [11, 12]
+
+
+def test_added_lines_handles_multiple_hunks():
+    diff = "@@ -1,2 +1,2 @@\n+first\n@@ -50,2 +60,2 @@\n+second\n"
+    assert added_lines(diff) == [1, 60]
+
+
+def test_untested_patch_lines_flags_unexecuted_additions():
+    result = _result(missing=[11])
+    assert untested_patch_lines(result, "src/a.py", DIFF) == [11]
+
+
+def test_untested_patch_lines_empty_when_all_covered():
+    assert untested_patch_lines(_result(missing=[99]), "src/a.py", DIFF) == []
+
+
+def test_untested_patch_lines_empty_when_unavailable():
+    assert untested_patch_lines(CoverageResult(available=False), "src/a.py", DIFF) == []
+
+
+def test_read_report_prefers_json(tmp_path):
+    (tmp_path / ".healer-coverage.json").write_text(
+        json.dumps({"files": {"a.py": {"summary": {"num_statements": 2}, "missing_lines": [1]}}})
+    )
+    (tmp_path / "coverage.xml").write_text(COBERTURA)
+    assert read_report(str(tmp_path)).source == "json"
+
+
+def test_read_report_falls_back_to_xml(tmp_path):
+    (tmp_path / "coverage.xml").write_text(COBERTURA)
+    assert read_report(str(tmp_path)).source == "xml"
+
+
+def test_read_report_missing_is_unavailable(tmp_path):
+    assert not read_report(str(tmp_path)).available
+
+
+def test_measure_end_to_end(tmp_path):
+    (tmp_path / "mod.py").write_text("def used():\n    return 1\n\ndef unused():\n    return 2\n")
+    (tmp_path / "test_mod.py").write_text("from mod import used\n\ndef test_used():\n    assert used() == 1\n")
+    result = measure(f"{sys.executable} -m pytest test_mod.py -p no:cacheprovider", str(tmp_path))
+    assert result.available
+    cov = result.get("mod.py")
+    assert cov is not None
+    assert 5 in cov.missing_lines  # body of unused()
+
+
+def test_measure_skips_non_pytest_suites(tmp_path):
+    assert not measure("npm test", str(tmp_path)).available
