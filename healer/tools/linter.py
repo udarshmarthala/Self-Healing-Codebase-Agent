@@ -75,3 +75,26 @@ def parse_ruff(output: str) -> list[LintIssue]:
             )
         )
     return issues
+
+
+# mypy: "healer/loop.py:41: error: Missing return statement  [return]"
+_MYPY_RE = re.compile(
+    r"^(?P<file>[^\s:][^:]*):(?P<line>\d+):(?:\d+:)?\s+(?P<sev>error|warning|note):\s+(?P<msg>.+?)(?:\s+\[(?P<code>[\w-]+)\])?$",
+    re.MULTILINE,
+)
+
+
+def parse_mypy(output: str) -> list[LintIssue]:
+    issues: list[LintIssue] = []
+    for m in _MYPY_RE.finditer(output):
+        issues.append(
+            LintIssue(
+                file=m.group("file").strip(),
+                line=int(m.group("line")),
+                code=m.group("code") or "mypy",
+                message=m.group("msg").strip(),
+                severity=m.group("sev"),
+                tool="mypy",
+            )
+        )
+    return issues
