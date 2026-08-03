@@ -39,7 +39,7 @@ Typed dataclass. All inter-cycle memory lives here. Passed by reference; agents 
 - Calls Claude API with a tightly scoped prompt
 
 ### agents/reviewer.py
-- Input: `Patch` + `Diagnosis`
+- Input: `Patch` + `Diagnosis` + the patched file's existing `LintIssue`s
 - Output: `ReviewResult` (approved bool + score + reason)
 - Two-gate: scope guard (no LLM) + LLM review
 - Reviewer never sees the full conversation history
@@ -54,6 +54,13 @@ Typed dataclass. All inter-cycle memory lives here. Passed by reference; agents 
 - Applies unified diffs via `patch -p1`
 - Writes full file content when diff not applicable
 - Atomic: any failure raises `PatchError` (caller must rollback)
+
+### tools/linter.py
+- Runs a lint command via subprocess (ruff / mypy / eslint / generic)
+- `detect_lint_command()` picks one per target repo; `None` disables the signal
+- Normalizes findings into `LintIssue` (file, line, code, message, severity)
+- `lint_delta()` diffs two runs by issue key to detect patch-introduced errors
+- Never raises: a missing, broken or slow linter degrades to no signal (logged)
 
 ### tools/git.py
 - Thin wrapper over subprocess git

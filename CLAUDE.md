@@ -18,6 +18,7 @@ self-healer/
 │   ├── tools/
 │   │   ├── runner.py    # Executes test suite, captures stdout/stderr
 │   │   ├── patcher.py   # Applies file diffs safely
+│   │   ├── linter.py    # Runs ruff/mypy/eslint, normalizes issues, detects regressions
 │   │   └── git.py       # Commit, diff, rollback helpers
 │   ├── state.py         # Blackboard: goal, cycle count, history, status
 │   └── escalation.py    # Generates human-readable failure reports
@@ -41,6 +42,10 @@ pip install -e ".[dev]"
 
 # Run healer on a target repo
 python -m healer.loop --target ./path/to/repo --test-cmd "pytest" --max-cycles 10
+
+# Lint signal (auto-detected by default; override or disable)
+python -m healer --target ./repo --test-cmd "pytest" --lint-cmd "ruff check ."
+python -m healer --target ./repo --test-cmd "pytest" --no-lint
 
 # Run healer's own tests
 pytest tests/ -v
@@ -101,6 +106,8 @@ class HealerState:
     patches_applied: list[dict]      # File, diff, rationale per patch
     stall_counter: int               # Cycles with no improvement
     error_fingerprints: set[str]     # Hashed error signatures seen
+    lint_command: str | None         # Lint signal command; None disables it
+    lint_by_cycle: list[dict]        # Per-cycle lint snapshot + introduced issues
 ```
 
 **Do not store full file contents in state. Store paths and diffs only.**
@@ -125,6 +132,9 @@ Agents receive only what they need — not the full state object.
 
 - `runner.py`: Always capture both stdout and stderr. Return exit code + combined output. Never suppress errors.
 - `patcher.py`: Apply patches atomically. On failure, roll back immediately. Log every patch attempt.
+- `linter.py`: Lint is a *secondary* signal — tests remain the exit criterion. A missing or broken
+  linter must never abort a run; degrade to no signal and log it. Compare issues by `LintIssue.key`
+  (line-insensitive) so line shifts aren't mistaken for new errors.
 - `git.py`: Commit after each successful cycle with message `[healer] cycle-N: <short rationale>`. This creates rollback points.
 
 **Before applying any patch: git commit the current state. If the patch breaks things, rollback is one command.**

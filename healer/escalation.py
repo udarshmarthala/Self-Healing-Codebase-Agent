@@ -35,6 +35,7 @@ def generate_report(state: HealerState, exit_reason: str) -> str:
     else:
         lines.append("- No patches attempted")
 
+    lines += _lint_section(state)
     lines += ["", "## Root Cause Hypothesis", hypothesis]
     lines += ["", "## Recommended Human Action", recommended_action]
 
@@ -76,6 +77,35 @@ def _summarize_attempts(state: HealerState) -> list[str]:
         summary.append(f"Cycle {cycle}: [{file_}] {rationale} {progress}")
 
     return summary
+
+
+def _lint_section(state: HealerState) -> list[str]:
+    if not state.lint_by_cycle:
+        return []
+
+    latest = state.lint_by_cycle[-1]
+    lines = [
+        "",
+        "## Static Analysis at Exit",
+        f"**Linter:** {latest.get('tool', 'unknown')} (`{state.lint_command}`)",
+        "**Open Issues:** "
+        + f"{latest.get('issue_count', 0)} ({latest.get('error_count', 0)} error(s))",
+        "",
+    ]
+
+    for issue in latest.get("issues", [])[:10]:
+        lines.append(f"- {issue}")
+    if latest.get("issue_count", 0) > 10:
+        lines.append(f"- ...and {latest['issue_count'] - 10} more")
+
+    regressions = state.lint_regressions()
+    if regressions:
+        lines += ["", "**Patches rolled back for introducing lint errors:**"]
+        for entry in regressions:
+            for issue in entry["introduced"][:3]:
+                lines.append(f"- Cycle {entry['cycle']}: {issue}")
+
+    return lines
 
 
 def _root_cause_hypothesis(state: HealerState) -> str:

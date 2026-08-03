@@ -60,3 +60,35 @@ def test_report_markdown_structure():
     assert "## What Was Tried" in report
     assert "## Root Cause Hypothesis" in report
     assert "## Recommended Human Action" in report
+
+
+def test_report_omits_lint_section_when_disabled():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    assert "Static Analysis at Exit" not in generate_report(state, "max_cycles")
+
+
+def test_report_includes_lint_section():
+    state = HealerState(
+        goal="g", target_repo="/tmp/r", test_command="pytest", lint_command="ruff check ."
+    )
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    state.record_lint_result("ruff", ["src/a.py:1 F401 unused"], error_count=1)
+    report = generate_report(state, "stall")
+    assert "## Static Analysis at Exit" in report
+    assert "ruff check ." in report
+    assert "src/a.py:1 F401 unused" in report
+
+
+def test_report_lists_lint_regressions():
+    state = HealerState(
+        goal="g", target_repo="/tmp/r", test_command="pytest", lint_command="ruff check ."
+    )
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    state.cycle = 3
+    state.record_lint_result(
+        "ruff", ["src/a.py:9 F821 undefined name"], 1, introduced=["src/a.py:9 F821 undefined name"]
+    )
+    report = generate_report(state, "stall")
+    assert "rolled back for introducing lint errors" in report
+    assert "Cycle 3: src/a.py:9 F821 undefined name" in report
