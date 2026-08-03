@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -104,5 +105,29 @@ def parse_cobertura_xml(xml_text: str) -> CoverageResult:
             result.files[path] = FileCoverage(
                 path=path, statements=statements, missing_lines=sorted(missing)
             )
+
+    return result
+
+
+def parse_coverage_json(json_text: str) -> CoverageResult:
+    """Parse coverage.py's JSON report (`--cov-report=json`).
+
+    Shape: {"files": {"src/a.py": {"summary": {"num_statements": N},
+                                   "missing_lines": [1, 2]}}}
+    """
+    result = CoverageResult(source="json")
+    try:
+        data = json.loads(json_text)
+    except json.JSONDecodeError as e:
+        logger.error("coverage: malformed JSON report — %s", e)
+        return CoverageResult(available=False, source="json")
+
+    for path, entry in (data.get("files") or {}).items():
+        summary = entry.get("summary") or {}
+        missing = [int(n) for n in entry.get("missing_lines", [])]
+        statements = int(summary.get("num_statements", len(entry.get("executed_lines", [])) + len(missing)))
+        result.files[path] = FileCoverage(
+            path=path, statements=statements, missing_lines=sorted(missing)
+        )
 
     return result
