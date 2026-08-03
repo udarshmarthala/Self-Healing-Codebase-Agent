@@ -18,6 +18,8 @@ class HealerState:
     patches_applied: list[dict] = field(default_factory=list)
     stall_counter: int = 0
     error_fingerprints: set[str] = field(default_factory=set)
+    lint_command: str | None = None
+    lint_by_cycle: list[dict] = field(default_factory=list)
 
     def record_cycle_result(self, test_output: str, exit_code: int, failures: list[str]) -> str:
         fingerprint = _fingerprint(failures)
@@ -38,6 +40,28 @@ class HealerState:
             "diff": diff,
             "rationale": rationale,
         })
+
+    def record_lint_result(
+        self,
+        tool: str,
+        issues: list[str],
+        error_count: int,
+        introduced: list[str] | None = None,
+    ) -> None:
+        """Store a cycle's lint snapshot. Issues are stored as rendered strings
+        (path:line code message), never file contents."""
+        self.lint_by_cycle.append({
+            "cycle": self.cycle,
+            "tool": tool,
+            "issue_count": len(issues),
+            "error_count": error_count,
+            "issues": issues[:50],
+            "introduced": (introduced or [])[:50],
+        })
+
+    def lint_regressions(self) -> list[dict]:
+        """Cycles where the applied patch introduced new lint issues."""
+        return [c for c in self.lint_by_cycle if c["introduced"]]
 
     def is_stalled(self, fingerprint: str) -> bool:
         if fingerprint in self.error_fingerprints:

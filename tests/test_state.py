@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from healer.state import HealerState, _fingerprint
 
@@ -61,3 +63,37 @@ def test_round_trip_json():
     assert restored.goal == s.goal
     assert restored.error_fingerprints == s.error_fingerprints
     assert len(restored.patches_applied) == 1
+
+
+def test_record_lint_result_stores_snapshot():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.cycle = 2
+    state.record_lint_result("ruff", ["a.py:1 F401 unused"], error_count=1)
+    assert state.lint_by_cycle[0]["cycle"] == 2
+    assert state.lint_by_cycle[0]["tool"] == "ruff"
+    assert state.lint_by_cycle[0]["issue_count"] == 1
+    assert state.lint_by_cycle[0]["introduced"] == []
+
+
+def test_record_lint_result_truncates_issue_list():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_lint_result("ruff", [f"a.py:{n} E501 long" for n in range(80)], error_count=80)
+    entry = state.lint_by_cycle[0]
+    assert entry["issue_count"] == 80
+    assert len(entry["issues"]) == 50
+
+
+def test_lint_regressions_only_returns_cycles_with_new_issues():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_lint_result("ruff", ["a.py:1 F401 unused"], error_count=1)
+    state.cycle = 1
+    state.record_lint_result("ruff", ["a.py:1 F401 unused"], 1, introduced=["a.py:1 F401 unused"])
+    assert [c["cycle"] for c in state.lint_regressions()] == [1]
+
+
+def test_lint_fields_survive_json_roundtrip():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest", lint_command="ruff check .")
+    state.record_lint_result("ruff", ["a.py:1 F401 unused"], error_count=1)
+    restored = HealerState.from_dict(json.loads(state.to_json()))
+    assert restored.lint_command == "ruff check ."
+    assert restored.lint_by_cycle[0]["tool"] == "ruff"
