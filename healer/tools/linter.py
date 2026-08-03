@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import subprocess
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -148,3 +149,61 @@ def parse_generic(output: str) -> list[LintIssue]:
             )
         )
     return issues[:200]
+
+
+def _parse_for(tool: str, output: str) -> list[LintIssue]:
+    if tool == "ruff":
+        return parse_ruff(output)
+    if tool == "mypy":
+        return parse_mypy(output)
+    if tool == "eslint":
+        return parse_eslint(output)
+    return parse_generic(output)
+
+
+def _tool_name(command: str) -> str:
+    for name in ("ruff", "mypy", "eslint"):
+        if name in command:
+            return name
+    return "generic"
+
+
+def run_lint(lint_command: str, target_repo: str, timeout: int = 120) -> LintResult:
+    """Run a lint command in target_repo. Never raises — a broken or missing
+    linter yields an empty result so the heal loop keeps running on test signal
+    alone. Every outcome is logged (no silent failures)."""
+    tool = _tool_name(lint_command)
+    logger.info("linter: running %r in %s (tool=%s)", lint_command, target_repo, tool)
+
+    try:
+        proc = subprocess.run(
+            lint_command,
+            shell=True,
+            cwd=target_repo,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("linter: %s timed out after %ds — treating as no signal", tool, timeout)
+        return LintResult(exit_code=1, output="TIMEOUT", issues=[], tool=tool, command=lint_command)
+    except OSError as e:
+        logger.error("linter: failed to launch %r — %s", lint_command, e)
+        return LintResult(exit_code=1, output=str(e), issues=[], tool=tool, command=lint_command)
+
+    combined = proc.stdout + proc.stderr
+    issues = _parse_for(tool, combined)
+    result = LintResult(
+        exit_code=proc.returncode,
+        output=combined,
+        issues=issues,
+        tool=tool,
+        command=lint_command,
+    )
+    logger.info(
+        "linter: exit_code=%d %s output_len=%d",
+        proc.returncode,
+        result.summary(),
+        len(combined),
+    )
+    return result
