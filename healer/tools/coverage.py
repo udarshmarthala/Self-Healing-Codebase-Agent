@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -68,3 +69,40 @@ class CoverageResult:
             f"coverage: {self.rate:.1%} "
             f"({self.total_statements - self.total_missing}/{self.total_statements} statements)"
         )
+
+
+def parse_cobertura_xml(xml_text: str) -> CoverageResult:
+    """Parse coverage.py's Cobertura XML (`--cov-report=xml`), the most precise
+    of the three formats: it carries per-line hit counts."""
+    result = CoverageResult(source="xml")
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+        logger.error("coverage: malformed cobertura XML — %s", e)
+        return CoverageResult(available=False, source="xml")
+
+    for cls in root.iter("class"):
+        path = cls.get("filename")
+        if not path:
+            continue
+        statements = 0
+        missing: list[int] = []
+        for line in cls.iter("line"):
+            number = line.get("number")
+            hits = line.get("hits")
+            if number is None or hits is None:
+                continue
+            statements += 1
+            if int(hits) == 0:
+                missing.append(int(number))
+
+        existing = result.files.get(path)
+        if existing:  # same file split across <package> entries
+            existing.statements += statements
+            existing.missing_lines = sorted(set(existing.missing_lines) | set(missing))
+        else:
+            result.files[path] = FileCoverage(
+                path=path, statements=statements, missing_lines=sorted(missing)
+            )
+
+    return result
