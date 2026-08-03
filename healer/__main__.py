@@ -8,6 +8,7 @@ from pathlib import Path
 
 from healer.loop import run
 from healer.state import HealerState
+from healer.tools.linter import detect_lint_command
 
 
 def main() -> None:
@@ -20,6 +21,16 @@ def main() -> None:
     parser.add_argument("--goal", default="Make all tests pass", help="Human-readable goal")
     parser.add_argument("--max-cycles", type=int, default=10, help="Hard cap on loop iterations")
     parser.add_argument("--state-out", default=None, help="Write final state JSON to this path")
+    parser.add_argument(
+        "--lint-cmd",
+        default=None,
+        help='Lint command for the second signal, e.g. "ruff check .". Auto-detected if omitted',
+    )
+    parser.add_argument(
+        "--no-lint",
+        action="store_true",
+        help="Disable the lint signal entirely (tests are then the only signal)",
+    )
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -36,11 +47,19 @@ def main() -> None:
 
     target = str(Path(args.target).resolve())
 
+    if args.no_lint:
+        lint_command = None
+    else:
+        lint_command = args.lint_cmd or detect_lint_command(target)
+    if lint_command:
+        print(f"Lint signal: {lint_command}")
+
     state = HealerState(
         goal=args.goal,
         target_repo=target,
         test_command=args.test_cmd,
         max_cycles=args.max_cycles,
+        lint_command=lint_command,
     )
 
     final_state = run(state)
