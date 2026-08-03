@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -196,3 +198,61 @@ def build_coverage_command(test_command: str, report_path: str = _REPORT_FILENAM
         parts.append("--cov=.")
     parts.append(f"--cov-report=json:{report_path}")
     return " ".join(parts)
+
+
+def read_report(target_repo: str, report_path: str = _REPORT_FILENAME) -> CoverageResult:
+    """Load whichever coverage report exists in the repo, newest format first."""
+    repo = Path(target_repo)
+
+    json_report = repo / report_path
+    if json_report.exists():
+        return parse_coverage_json(json_report.read_text())
+
+    xml_report = repo / "coverage.xml"
+    if xml_report.exists():
+        return parse_cobertura_xml(xml_report.read_text())
+
+    logger.info("coverage: no report found in %s", target_repo)
+    return CoverageResult(available=False, source="none")
+
+
+def measure(test_command: str, target_repo: str, timeout: int = 300) -> CoverageResult:
+    """Run the test suite with coverage instrumentation and return the result.
+
+    Never raises. Coverage is advisory — pass/fail always comes from runner.py,
+    so a missing pytest-cov or a broken report degrades to `available=False`.
+    """
+    if not supports_coverage(test_command):
+        logger.info("coverage: %r is not pytest-based — no coverage signal", test_command)
+        return CoverageResult(available=False, source="none")
+
+    command = build_coverage_command(test_command)
+    logger.info("coverage: running %r in %s", command, target_repo)
+
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            cwd=target_repo,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("coverage: timed out after %ds — no coverage signal", timeout)
+        return CoverageResult(available=False, source="none")
+    except OSError as e:
+        logger.error("coverage: failed to launch %r — %s", command, e)
+        return CoverageResult(available=False, source="none")
+
+    combined = proc.stdout + proc.stderr
+    result = read_report(target_repo)
+
+    if not result.available:
+        result = parse_term_missing(combined)
+        result.available = bool(result.files)
+        if not result.available:
+            logger.warning("coverage: no parseable report (exit_code=%d)", proc.returncode)
+
+    logger.info("coverage: exit_code=%d %s", proc.returncode, result.summary())
+    return result
