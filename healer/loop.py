@@ -11,7 +11,7 @@ from healer.agents.fixer import generate_fix
 from healer.agents.reviewer import review_patch
 from healer.escalation import generate_report, write_report
 from healer.state import HealerState
-from healer.tools import git, patcher
+from healer.tools import git, linter, patcher
 from healer.tools.runner import run_tests
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,15 @@ def run(state: HealerState) -> HealerState:
         _console.print(f"[red]✗ {len(result.failures)} failure(s) detected[/red]")
         logger.info("loop: %d failures detected", len(result.failures))
 
+        lint_before = _lint(state)
+        if lint_before is not None:
+            state.record_lint_result(
+                lint_before.tool,
+                [str(i) for i in lint_before.issues],
+                lint_before.error_count,
+            )
+            _console.print(f"[dim]lint: {lint_before.summary()}[/dim]")
+
         # Check exit conditions before reasoning
         if state.is_at_max_cycles():
             logger.warning("loop: max cycles reached — escalating")
@@ -67,7 +76,10 @@ def run(state: HealerState) -> HealerState:
         sha_before = git.current_sha(state.target_repo)
         patch = generate_fix(diagnosis, state.target_repo, state.cycle)
 
-        review = review_patch(patch, diagnosis, state.target_repo)
+        scoped_lint = (
+            lint_before.issues_in([patch.file_path]) if lint_before is not None else []
+        )
+        review = review_patch(patch, diagnosis, state.target_repo, lint_issues=scoped_lint)
         if not review.approved:
             logger.warning("loop: reviewer rejected patch — %s", review.reason)
             # Don't apply; let next cycle try a different strategy
@@ -94,6 +106,34 @@ def run(state: HealerState) -> HealerState:
         prev_count = len(result.failures)
         curr_count = len(verify.failures)
 
+        # Lint regression gate: a patch that fixes a test but adds new static
+        # errors is not progress. Fully-green runs are never blocked on lint.
+        lint_after = _lint(state) if lint_before is not None else None
+        if lint_before is not None and lint_after is not None:
+            delta = linter.lint_delta(lint_before, lint_after)
+            state.record_lint_result(
+                lint_after.tool,
+                [str(i) for i in lint_after.issues],
+                lint_after.error_count,
+                introduced=[str(i) for i in delta.introduced],
+            )
+            if delta.is_regression and verify.exit_code != 0:
+                _console.print(
+                    f"[yellow]↔ Patch introduced {len(delta.introduced)} lint error(s) — rolling back[/yellow]"
+                )
+                logger.warning(
+                    "loop: lint regression (%s) — rolling back patch on %s",
+                    delta.summary(),
+                    patch.file_path,
+                )
+                git.rollback_to(state.target_repo, sha_before)
+                state.record_patch(
+                    patch.file_path,
+                    patch.unified_diff,
+                    f"LINT_REGRESSION: {linter.format_issues(delta.introduced, limit=5)}",
+                )
+                continue
+
         if curr_count < prev_count or verify.exit_code == 0:
             commit_msg = f"[healer] cycle-{state.cycle}: {patch.rationale[:72]}"
             git.commit(state.target_repo, commit_msg)
@@ -107,6 +147,13 @@ def run(state: HealerState) -> HealerState:
             state.record_patch(patch.file_path, patch.unified_diff, f"NO_PROGRESS: {patch.rationale}")
 
     return state  # unreachable, satisfies type checker
+
+
+def _lint(state: HealerState) -> linter.LintResult | None:
+    """Run the configured linter, or None when lint signal is disabled."""
+    if not state.lint_command:
+        return None
+    return linter.run_lint(state.lint_command, state.target_repo)
 
 
 def _escalate(state: HealerState, reason: str) -> HealerState:
