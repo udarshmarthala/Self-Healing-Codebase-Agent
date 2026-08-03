@@ -301,3 +301,54 @@ def coverage_delta(before: CoverageResult, after: CoverageResult) -> CoverageDel
     )
     logger.info("coverage: delta %s (declined=%s)", delta.summary(), delta.declined)
     return delta
+
+
+# Unified diff hunk header: "@@ -12,3 +14,7 @@"
+_HUNK_RE = re.compile(r"^@@\s+-\d+(?:,\d+)?\s+\+(?P<start>\d+)(?:,(?P<count>\d+))?\s+@@")
+
+
+def added_lines(unified_diff: str) -> list[int]:
+    """Post-patch line numbers of lines a unified diff adds."""
+    lines: list[int] = []
+    current = 0
+    for line in unified_diff.splitlines():
+        m = _HUNK_RE.match(line)
+        if m:
+            current = int(m.group("start"))
+            continue
+        if current == 0 or line.startswith("---") or line.startswith("+++"):
+            continue
+        if line.startswith("+"):
+            lines.append(current)
+            current += 1
+        elif line.startswith("-"):
+            continue  # removed lines do not advance the post-patch counter
+        else:
+            current += 1
+    return lines
+
+
+def untested_patch_lines(
+    result: CoverageResult, file_path: str, unified_diff: str
+) -> list[int]:
+    """Lines the patch added that the test suite never executed.
+
+    This is the sharpest signal the healer has that a fix is unverified: the
+    tests went green without ever running the new code.
+    """
+    if not result.available or not unified_diff:
+        return []
+
+    file_cov = result.get(file_path)
+    if file_cov is None:
+        return []
+
+    untested = file_cov.uncovered_among(added_lines(unified_diff))
+    if untested:
+        logger.warning(
+            "coverage: %s has %d added line(s) never executed by the suite: %s",
+            file_path,
+            len(untested),
+            untested[:10],
+        )
+    return untested
