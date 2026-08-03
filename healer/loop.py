@@ -11,7 +11,7 @@ from healer.agents.fixer import generate_fix
 from healer.agents.reviewer import review_patch
 from healer.escalation import generate_report, write_report
 from healer.state import HealerState
-from healer.tools import git, linter, patcher
+from healer.tools import coverage, git, linter, patcher
 from healer.tools.runner import run_tests
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,10 @@ def run(state: HealerState) -> HealerState:
     _console.print(Panel(f"[bold green]Self-Healer[/bold green]  target=[cyan]{state.target_repo}[/cyan]  max_cycles=[yellow]{state.max_cycles}[/yellow]"))
 
     git.ensure_git_repo(state.target_repo)
+
+    # Carried across cycles so coverage is measured once per cycle, not twice:
+    # this cycle's post-patch measurement is the next cycle's baseline.
+    coverage_before: coverage.CoverageResult | None = None
 
     while True:
         state.cycle += 1
@@ -133,6 +137,30 @@ def run(state: HealerState) -> HealerState:
                     f"LINT_REGRESSION: {linter.format_issues(delta.introduced, limit=5)}",
                 )
                 continue
+
+        # Coverage is advisory: it never blocks a patch, but an added line the
+        # suite never runs means the fix is unverified, and that goes on record.
+        if state.coverage_enabled:
+            coverage_after = coverage.measure(state.test_command, state.target_repo)
+            cov_delta = coverage.coverage_delta(
+                coverage_before or coverage.CoverageResult(available=False), coverage_after
+            )
+            untested = coverage.untested_patch_lines(
+                coverage_after, patch.file_path, patch.unified_diff
+            )
+            state.record_coverage_result(
+                rate=coverage_after.rate,
+                rate_change=cov_delta.rate_change,
+                untested_patch_lines=untested,
+                files_declined=cov_delta.files_declined,
+            )
+            if untested:
+                _console.print(
+                    f"[yellow]⚠ {len(untested)} patched line(s) in {patch.file_path} "
+                    f"are never executed by the suite[/yellow]"
+                )
+            _console.print(f"[dim]{cov_delta.summary()}[/dim]")
+            coverage_before = coverage_after
 
         if curr_count < prev_count or verify.exit_code == 0:
             commit_msg = f"[healer] cycle-{state.cycle}: {patch.rationale[:72]}"

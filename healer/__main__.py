@@ -8,6 +8,7 @@ from pathlib import Path
 
 from healer.loop import run
 from healer.state import HealerState
+from healer.tools.coverage import supports_coverage
 from healer.tools.linter import detect_lint_command
 
 
@@ -32,6 +33,12 @@ def main() -> None:
         help="Disable the lint signal entirely (tests are then the only signal)",
     )
     parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="Measure coverage each cycle and flag patched lines the suite never runs "
+        "(pytest only; costs one extra suite run per cycle)",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -54,12 +61,19 @@ def main() -> None:
     if lint_command:
         print(f"Lint signal: {lint_command}")
 
+    coverage_enabled = args.coverage and supports_coverage(args.test_cmd)
+    if args.coverage and not coverage_enabled:
+        print(f"Coverage signal unavailable: {args.test_cmd!r} is not pytest-based")
+    elif coverage_enabled:
+        print("Coverage signal: on")
+
     state = HealerState(
         goal=args.goal,
         target_repo=target,
         test_command=args.test_cmd,
         max_cycles=args.max_cycles,
         lint_command=lint_command,
+        coverage_enabled=coverage_enabled,
     )
 
     final_state = run(state)
