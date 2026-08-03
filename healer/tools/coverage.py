@@ -138,7 +138,7 @@ def parse_coverage_json(json_text: str) -> CoverageResult:
 
 # term-missing row: "src/auth.py   45   6   87%   12-14, 20"
 _TERM_ROW_RE = re.compile(
-    r"^(?P<path>[\w./\\-]+\.\w+)\s+(?P<stmts>\d+)\s+(?P<miss>\d+)\s+(?:\d+%)(?:\s+(?P<lines>[\d,\s-]+))?$"
+    r"^(?P<path>[\w./\\-]+\.\w+)\s+(?P<stmts>\d+)\s+(?P<miss>\d+)\s+(?:\d+%)(?:\s+(?P<lines>[\d,\s>-]+))?$"
 )
 
 
