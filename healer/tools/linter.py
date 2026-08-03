@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -51,3 +52,26 @@ class LintResult:
         if not self.issues:
             return f"{self.tool}: clean"
         return f"{self.tool}: {len(self.issues)} issue(s), {self.error_count} error(s)"
+
+
+# ruff: "src/auth.py:12:1: F401 [*] `os` imported but unused"
+_RUFF_RE = re.compile(
+    r"^(?P<file>[^\s:][^:]*):(?P<line>\d+):(?P<col>\d+):\s+(?P<code>[A-Z]+\d+)\s+(?:\[\*\]\s+)?(?P<msg>.+)$",
+    re.MULTILINE,
+)
+
+
+def parse_ruff(output: str) -> list[LintIssue]:
+    issues: list[LintIssue] = []
+    for m in _RUFF_RE.finditer(output):
+        issues.append(
+            LintIssue(
+                file=m.group("file").strip(),
+                line=int(m.group("line")),
+                code=m.group("code"),
+                message=m.group("msg").strip(),
+                severity="error",
+                tool="ruff",
+            )
+        )
+    return issues
