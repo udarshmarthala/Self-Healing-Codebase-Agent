@@ -98,3 +98,53 @@ def parse_mypy(output: str) -> list[LintIssue]:
             )
         )
     return issues
+
+
+# eslint stylish output groups issues under a bare file path:
+#   /repo/src/app.js
+#     12:3  error  'x' is assigned a value but never used  no-unused-vars
+_ESLINT_FILE_RE = re.compile(r"^(?P<file>[^\s].*\.(?:js|jsx|ts|tsx|mjs|cjs))$")
+_ESLINT_ISSUE_RE = re.compile(
+    r"^\s+(?P<line>\d+):(?P<col>\d+)\s+(?P<sev>error|warning)\s+(?P<msg>.+?)\s{2,}(?P<code>[\w@/-]+)\s*$"
+)
+
+
+def parse_eslint(output: str) -> list[LintIssue]:
+    issues: list[LintIssue] = []
+    current_file = ""
+    for line in output.splitlines():
+        fm = _ESLINT_FILE_RE.match(line)
+        if fm:
+            current_file = fm.group("file").strip()
+            continue
+        im = _ESLINT_ISSUE_RE.match(line)
+        if im and current_file:
+            issues.append(
+                LintIssue(
+                    file=current_file,
+                    line=int(im.group("line")),
+                    code=im.group("code"),
+                    message=im.group("msg").strip(),
+                    severity=im.group("sev"),
+                    tool="eslint",
+                )
+            )
+    return issues
+
+
+def parse_generic(output: str) -> list[LintIssue]:
+    """Last-resort parser for unknown linters: any file:line: message line."""
+    issues: list[LintIssue] = []
+    pattern = re.compile(r"^(?P<file>[^\s:][^:]*):(?P<line>\d+):(?:\d+:)?\s*(?P<msg>.+)$", re.MULTILINE)
+    for m in pattern.finditer(output):
+        issues.append(
+            LintIssue(
+                file=m.group("file").strip(),
+                line=int(m.group("line")),
+                code="generic",
+                message=m.group("msg").strip(),
+                severity="error",
+                tool="generic",
+            )
+        )
+    return issues[:200]
