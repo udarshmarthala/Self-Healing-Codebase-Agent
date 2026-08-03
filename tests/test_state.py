@@ -97,3 +97,32 @@ def test_lint_fields_survive_json_roundtrip():
     restored = HealerState.from_dict(json.loads(state.to_json()))
     assert restored.lint_command == "ruff check ."
     assert restored.lint_by_cycle[0]["tool"] == "ruff"
+
+
+def test_record_coverage_result_stores_snapshot():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.cycle = 4
+    state.record_coverage_result(rate=0.8123, rate_change=-0.05, files_declined=["a.py"])
+    entry = state.coverage_by_cycle[0]
+    assert entry["cycle"] == 4
+    assert entry["rate"] == 0.8123
+    assert entry["files_declined"] == ["a.py"]
+    assert entry["untested_patch_lines"] == []
+
+
+def test_unverified_patches_only_returns_cycles_with_untested_lines():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_coverage_result(rate=0.9)
+    state.cycle = 2
+    state.record_coverage_result(rate=0.9, untested_patch_lines=[11, 12])
+    assert [c["cycle"] for c in state.unverified_patches()] == [2]
+
+
+def test_coverage_fields_survive_json_roundtrip():
+    state = HealerState(
+        goal="g", target_repo="/tmp/r", test_command="pytest", coverage_enabled=True
+    )
+    state.record_coverage_result(rate=0.5, untested_patch_lines=[3])
+    restored = HealerState.from_dict(json.loads(state.to_json()))
+    assert restored.coverage_enabled
+    assert restored.coverage_by_cycle[0]["untested_patch_lines"] == [3]

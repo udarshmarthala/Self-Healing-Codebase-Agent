@@ -20,6 +20,8 @@ class HealerState:
     error_fingerprints: set[str] = field(default_factory=set)
     lint_command: str | None = None
     lint_by_cycle: list[dict] = field(default_factory=list)
+    coverage_enabled: bool = False
+    coverage_by_cycle: list[dict] = field(default_factory=list)
 
     def record_cycle_result(self, test_output: str, exit_code: int, failures: list[str]) -> str:
         fingerprint = _fingerprint(failures)
@@ -58,6 +60,26 @@ class HealerState:
             "issues": issues[:50],
             "introduced": (introduced or [])[:50],
         })
+
+    def record_coverage_result(
+        self,
+        rate: float,
+        rate_change: float = 0.0,
+        untested_patch_lines: list[int] | None = None,
+        files_declined: list[str] | None = None,
+    ) -> None:
+        """Store a cycle's coverage snapshot: rates and line numbers only."""
+        self.coverage_by_cycle.append({
+            "cycle": self.cycle,
+            "rate": round(rate, 4),
+            "rate_change": round(rate_change, 4),
+            "untested_patch_lines": (untested_patch_lines or [])[:50],
+            "files_declined": (files_declined or [])[:20],
+        })
+
+    def unverified_patches(self) -> list[dict]:
+        """Cycles whose patch added lines the test suite never executed."""
+        return [c for c in self.coverage_by_cycle if c["untested_patch_lines"]]
 
     def lint_regressions(self) -> list[dict]:
         """Cycles where the applied patch introduced new lint issues."""
