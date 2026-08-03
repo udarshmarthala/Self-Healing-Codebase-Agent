@@ -92,3 +92,33 @@ def test_report_lists_lint_regressions():
     report = generate_report(state, "stall")
     assert "rolled back for introducing lint errors" in report
     assert "Cycle 3: src/a.py:9 F821 undefined name" in report
+
+
+def test_report_omits_coverage_section_when_disabled():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    assert "Coverage at Exit" not in generate_report(state, "max_cycles")
+
+
+def test_report_includes_coverage_section():
+    state = HealerState(
+        goal="g", target_repo="/tmp/r", test_command="pytest", coverage_enabled=True
+    )
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    state.record_coverage_result(rate=0.834, rate_change=-0.031, files_declined=["src/a.py"])
+    report = generate_report(state, "stall")
+    assert "## Coverage at Exit" in report
+    assert "83.4%" in report
+    assert "src/a.py" in report
+
+
+def test_report_lists_unverified_patches():
+    state = HealerState(
+        goal="g", target_repo="/tmp/r", test_command="pytest", coverage_enabled=True
+    )
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    state.cycle = 5
+    state.record_coverage_result(rate=0.9, untested_patch_lines=[11, 12])
+    report = generate_report(state, "stall")
+    assert "never executed" in report
+    assert "Cycle 5: line(s) 11, 12" in report

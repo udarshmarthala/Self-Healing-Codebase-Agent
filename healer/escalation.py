@@ -36,6 +36,7 @@ def generate_report(state: HealerState, exit_reason: str) -> str:
         lines.append("- No patches attempted")
 
     lines += _lint_section(state)
+    lines += _coverage_section(state)
     lines += ["", "## Root Cause Hypothesis", hypothesis]
     lines += ["", "## Recommended Human Action", recommended_action]
 
@@ -104,6 +105,37 @@ def _lint_section(state: HealerState) -> list[str]:
         for entry in regressions:
             for issue in entry["introduced"][:3]:
                 lines.append(f"- Cycle {entry['cycle']}: {issue}")
+
+    return lines
+
+
+def _coverage_section(state: HealerState) -> list[str]:
+    if not state.coverage_by_cycle:
+        return []
+
+    latest = state.coverage_by_cycle[-1]
+    lines = [
+        "",
+        "## Coverage at Exit",
+        f"**Line Coverage:** {latest.get('rate', 0.0):.1%} "
+        f"(change this cycle: {latest.get('rate_change', 0.0):+.1%})",
+    ]
+
+    declined = latest.get("files_declined") or []
+    if declined:
+        lines += ["", "**Files whose coverage declined:**"]
+        lines += [f"- {path}" for path in declined]
+
+    unverified = state.unverified_patches()
+    if unverified:
+        lines += [
+            "",
+            "**Patched lines the test suite never executed** — these fixes are "
+            "unverified even where tests went green:",
+        ]
+        for entry in unverified:
+            numbers = ", ".join(str(n) for n in entry["untested_patch_lines"][:10])
+            lines.append(f"- Cycle {entry['cycle']}: line(s) {numbers}")
 
     return lines
 

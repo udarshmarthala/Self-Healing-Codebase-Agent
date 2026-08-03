@@ -62,6 +62,14 @@ Typed dataclass. All inter-cycle memory lives here. Passed by reference; agents 
 - `lint_delta()` diffs two runs by issue key to detect patch-introduced errors
 - Never raises: a missing, broken or slow linter degrades to no signal (logged)
 
+### tools/coverage.py
+- Runs the pytest suite instrumented with coverage, then parses the report
+- Format fallback chain: coverage JSON -> cobertura XML -> term-missing table
+- `coverage_delta()` compares two runs with a 2% tolerance for unrelated drift
+- `untested_patch_lines()` maps diff hunks to post-patch line numbers and
+  intersects them with missing lines — the unverified-fix signal
+- Advisory: never blocks a patch; removes its own artifacts before git stages
+
 ### tools/git.py
 - Thin wrapper over subprocess git
 - `commit`, `diff`, `current_sha`, `rollback_to`, `ensure_git_repo`

@@ -19,6 +19,7 @@ self-healer/
 │   │   ├── runner.py    # Executes test suite, captures stdout/stderr
 │   │   ├── patcher.py   # Applies file diffs safely
 │   │   ├── linter.py    # Runs ruff/mypy/eslint, normalizes issues, detects regressions
+│   │   ├── coverage.py  # Measures line coverage, flags patched lines no test executes
 │   │   └── git.py       # Commit, diff, rollback helpers
 │   ├── state.py         # Blackboard: goal, cycle count, history, status
 │   └── escalation.py    # Generates human-readable failure reports
@@ -46,6 +47,9 @@ python -m healer.loop --target ./path/to/repo --test-cmd "pytest" --max-cycles 1
 # Lint signal (auto-detected by default; override or disable)
 python -m healer --target ./repo --test-cmd "pytest" --lint-cmd "ruff check ."
 python -m healer --target ./repo --test-cmd "pytest" --no-lint
+
+# Coverage signal (off by default — costs one extra suite run per cycle)
+python -m healer --target ./repo --test-cmd "pytest" --coverage
 
 # Run healer's own tests
 pytest tests/ -v
@@ -108,6 +112,8 @@ class HealerState:
     error_fingerprints: set[str]     # Hashed error signatures seen
     lint_command: str | None         # Lint signal command; None disables it
     lint_by_cycle: list[dict]        # Per-cycle lint snapshot + introduced issues
+    coverage_enabled: bool           # Whether the coverage signal is on
+    coverage_by_cycle: list[dict]    # Per-cycle rate, delta, untested patch lines
 ```
 
 **Do not store full file contents in state. Store paths and diffs only.**
@@ -135,6 +141,11 @@ Agents receive only what they need — not the full state object.
 - `linter.py`: Lint is a *secondary* signal — tests remain the exit criterion. A missing or broken
   linter must never abort a run; degrade to no signal and log it. Compare issues by `LintIssue.key`
   (line-insensitive) so line shifts aren't mistaken for new errors.
+- `coverage.py`: Advisory only — it never blocks or rolls back a patch, because coverage moves
+  for reasons unrelated to the fix (a newly passing test executes more lines). Its real job is
+  flagging *patched lines the suite never executed*: tests green + code never run = unverified
+  fix, and that belongs in the escalation report. Always delete coverage artifacts after
+  measuring — `git.py` stages with `git add -A`.
 - `git.py`: Commit after each successful cycle with message `[healer] cycle-N: <short rationale>`. This creates rollback points.
 
 **Before applying any patch: git commit the current state. If the patch breaks things, rollback is one command.**

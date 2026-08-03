@@ -331,7 +331,7 @@ def added_lines(unified_diff: str) -> list[int]:
         if m:
             current = int(m.group("start"))
             continue
-        if current == 0 or line.startswith("---") or line.startswith("+++"):
+        if current == 0 or line.startswith(("---", "+++")):
             continue
         if line.startswith("+"):
             lines.append(current)
