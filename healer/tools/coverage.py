@@ -173,3 +173,26 @@ def parse_term_missing(output: str) -> CoverageResult:
             missing_lines=sorted(missing),
         )
     return result
+
+
+_REPORT_FILENAME = ".healer-coverage.json"
+
+
+def supports_coverage(test_command: str) -> bool:
+    """Only pytest-based suites are instrumented. Anything else (npm, make,
+    custom scripts) runs unchanged and yields no coverage signal."""
+    return "pytest" in test_command
+
+
+def build_coverage_command(test_command: str, report_path: str = _REPORT_FILENAME) -> str:
+    """Wrap a pytest command with coverage reporting. Existing --cov flags are
+    respected; only the JSON report is appended so the user's own reports and
+    thresholds are untouched."""
+    if not supports_coverage(test_command):
+        return test_command
+
+    parts = [test_command]
+    if "--cov" not in test_command:
+        parts.append("--cov=.")
+    parts.append(f"--cov-report=json:{report_path}")
+    return " ".join(parts)
