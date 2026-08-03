@@ -230,3 +230,42 @@ def detect_lint_command(target_repo: str) -> str | None:
 
     logger.info("linter: no lint command detected for %s — lint signal disabled", target_repo)
     return None
+
+
+@dataclass
+class LintDelta:
+    introduced: list[LintIssue] = field(default_factory=list)
+    resolved: list[LintIssue] = field(default_factory=list)
+
+    @property
+    def is_regression(self) -> bool:
+        return any(i.severity == "error" for i in self.introduced)
+
+    def summary(self) -> str:
+        return f"+{len(self.introduced)} / -{len(self.resolved)} lint issue(s)"
+
+
+def lint_delta(before: LintResult, after: LintResult) -> LintDelta:
+    """Issues a patch introduced and resolved. Compared on LintIssue.key, so
+    pure line shifts are not counted as regressions."""
+    before_keys = {i.key for i in before.issues}
+    after_keys = {i.key for i in after.issues}
+
+    delta = LintDelta(
+        introduced=[i for i in after.issues if i.key not in before_keys],
+        resolved=[i for i in before.issues if i.key not in after_keys],
+    )
+    logger.info("linter: delta %s (regression=%s)", delta.summary(), delta.is_regression)
+    for issue in delta.introduced:
+        logger.warning("linter: introduced %s", issue)
+    return delta
+
+
+def format_issues(issues: list[LintIssue], limit: int = 20) -> str:
+    """Compact rendering for agent prompts and escalation reports."""
+    if not issues:
+        return "(none)"
+    lines = [f"- {i}" for i in issues[:limit]]
+    if len(issues) > limit:
+        lines.append(f"- ...and {len(issues) - limit} more")
+    return "\n".join(lines)
