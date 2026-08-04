@@ -174,3 +174,29 @@ def load(target_repo: str) -> Journal:
         len(journal.events),
     )
     return journal
+
+
+def check_compatible(journal: Journal, target_repo: str, test_command: str) -> None:
+    """Refuse to resume a journal that describes a different run.
+
+    Resuming with a different test command or repo would carry over failure
+    fingerprints and a stall counter that describe work that never happened,
+    corrupting stall detection for the rest of the run.
+    """
+    saved_repo = str(journal.state.get("target_repo", ""))
+    saved_cmd = str(journal.state.get("test_command", ""))
+
+    if saved_repo and Path(saved_repo).resolve() != Path(target_repo).resolve():
+        raise JournalError(
+            f"journal was recorded for {saved_repo}, not {target_repo} — refusing to resume"
+        )
+
+    if saved_cmd and saved_cmd != test_command:
+        raise JournalError(
+            f"journal was recorded with test command {saved_cmd!r}, not {test_command!r} — "
+            "stall detection would carry over fingerprints from a different suite"
+        )
+
+    status = journal.state.get("status")
+    if status in ("success", "escalated"):
+        raise JournalError(f"journal already finished with status {status!r} — nothing to resume")
