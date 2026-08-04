@@ -20,6 +20,7 @@ self-healer/
 │   │   ├── patcher.py   # Applies file diffs safely
 │   │   ├── linter.py    # Runs ruff/mypy/eslint, normalizes issues, detects regressions
 │   │   ├── coverage.py  # Measures line coverage, flags patched lines no test executes
+│   │   ├── journal.py   # Durable per-cycle state snapshots; powers --resume
 │   │   └── git.py       # Commit, diff, rollback helpers
 │   ├── state.py         # Blackboard: goal, cycle count, history, status
 │   └── escalation.py    # Generates human-readable failure reports
@@ -50,6 +51,9 @@ python -m healer --target ./repo --test-cmd "pytest" --no-lint
 
 # Coverage signal (off by default — costs one extra suite run per cycle)
 python -m healer --target ./repo --test-cmd "pytest" --coverage
+
+# Resume an interrupted run from <target>/.healer/journal.json
+python -m healer --target ./repo --test-cmd "pytest" --resume
 
 # Run healer's own tests
 pytest tests/ -v
@@ -114,6 +118,7 @@ class HealerState:
     lint_by_cycle: list[dict]        # Per-cycle lint snapshot + introduced issues
     coverage_enabled: bool           # Whether the coverage signal is on
     coverage_by_cycle: list[dict]    # Per-cycle rate, delta, untested patch lines
+    resumed_from_cycle: int | None   # Cycle this run was resumed from, if any
 ```
 
 **Do not store full file contents in state. Store paths and diffs only.**
@@ -146,6 +151,12 @@ Agents receive only what they need — not the full state object.
   flagging *patched lines the suite never executed*: tests green + code never run = unverified
   fix, and that belongs in the escalation report. Always delete coverage artifacts after
   measuring — `git.py` stages with `git add -A`.
+- `journal.py`: Write atomically (temp file + `os.replace`) — a truncated journal is worse than
+  none, because `--resume` would trust it. Unlike the other tools this one does NOT degrade
+  silently: an unreadable or mismatched journal raises `JournalError` and `--resume` exits 2.
+  Refuse to resume across a changed repo or test command; the carried-over fingerprints would
+  corrupt stall detection. Journal lives in `<target>/.healer/`, kept out of the user's commits
+  via `.git/info/exclude` (local-only — never touch a tracked file in the repo being healed).
 - `git.py`: Commit after each successful cycle with message `[healer] cycle-N: <short rationale>`. This creates rollback points.
 
 **Before applying any patch: git commit the current state. If the patch breaks things, rollback is one command.**
@@ -201,6 +212,8 @@ See: tests/fixtures/auth_fixtures.py line 14
 - Do not pass the full conversation history between cycles. Use the state blackboard.
 - Do not let the fixer see the reviewer's internal scoring. Fixer gets: task + relevant files only.
 - Do not auto-extend `max_cycles` at runtime. If 10 cycles isn't enough, escalate and let the human decide.
+- Do not let `--resume` reset the cycle counter. `max_cycles` caps the whole run across resumes —
+  otherwise resuming becomes a back door around the cap.
 - Do not commit broken state. Only `git.py` commits, and only after `runner.py` confirms improvement.
 
 ---

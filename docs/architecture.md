@@ -70,6 +70,14 @@ Typed dataclass. All inter-cycle memory lives here. Passed by reference; agents 
   intersects them with missing lines — the unverified-fix signal
 - Advisory: never blocks a patch; removes its own artifacts before git stages
 
+### tools/journal.py
+- Persists the full state plus an ordered event log to `<target>/.healer/journal.json`
+- Atomic writes (temp file + `os.replace` + fsync); schema-versioned
+- `check_compatible()` refuses a journal from a different repo, a different
+  test command, or an already-finished run
+- Registers `.healer/` in `.git/info/exclude` so `git add -A` never stages it
+- Loud on failure: raises `JournalError` instead of degrading silently
+
 ### tools/git.py
 - Thin wrapper over subprocess git
 - `commit`, `diff`, `current_sha`, `rollback_to`, `ensure_git_repo`
