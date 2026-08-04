@@ -126,3 +126,27 @@ def test_coverage_fields_survive_json_roundtrip():
     restored = HealerState.from_dict(json.loads(state.to_json()))
     assert restored.coverage_enabled
     assert restored.coverage_by_cycle[0]["untested_patch_lines"] == [3]
+
+
+def test_mark_resumed_records_cycle_and_resets_status():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.cycle = 6
+    state.status = "escalated"
+    state.mark_resumed()
+    assert state.resumed_from_cycle == 6
+    assert state.status == "in_progress"
+
+
+def test_resume_does_not_extend_the_cycle_cap():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest", max_cycles=10)
+    state.cycle = 8
+    state.mark_resumed()
+    assert state.cycle == 8
+    assert state.cycles_remaining() == 2
+    assert not state.is_at_max_cycles()
+
+
+def test_cycles_remaining_never_negative():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest", max_cycles=3)
+    state.cycle = 5
+    assert state.cycles_remaining() == 0
