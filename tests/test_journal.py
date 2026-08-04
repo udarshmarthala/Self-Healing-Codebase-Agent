@@ -119,3 +119,90 @@ def test_load_empty_state_raises(tmp_path):
     path.write_text(json.dumps({"schema_version": SCHEMA_VERSION, "state": {}}))
     with pytest.raises(JournalError, match="no state"):
         load(str(tmp_path))
+
+
+def _journal(target_repo, test_command="pytest", status="in_progress"):
+    return Journal(state={
+        "target_repo": str(target_repo),
+        "test_command": test_command,
+        "status": status,
+        "cycle": 2,
+    })
+
+
+def test_check_compatible_accepts_matching_run(tmp_path):
+    check_compatible(_journal(tmp_path), str(tmp_path), "pytest")  # must not raise
+
+
+def test_check_compatible_rejects_different_repo(tmp_path):
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    with pytest.raises(JournalError, match="refusing to resume"):
+        check_compatible(_journal(tmp_path), str(other), "pytest")
+
+
+def test_check_compatible_rejects_different_test_command(tmp_path):
+    with pytest.raises(JournalError, match="stall detection"):
+        check_compatible(_journal(tmp_path), str(tmp_path), "pytest -k auth")
+
+
+def test_check_compatible_rejects_finished_run(tmp_path):
+    with pytest.raises(JournalError, match="nothing to resume"):
+        check_compatible(_journal(tmp_path, status="success"), str(tmp_path), "pytest")
+
+
+def test_check_compatible_ignores_equivalent_path_spellings(tmp_path):
+    messy = f"{tmp_path}/./"
+    check_compatible(_journal(tmp_path), messy, "pytest")  # must not raise
+
+
+def test_ensure_git_excluded_creates_exclude_file(tmp_path):
+    (tmp_path / ".git").mkdir()
+    assert ensure_git_excluded(str(tmp_path))
+    assert ".healer/" in (tmp_path / ".git" / "info" / "exclude").read_text()
+
+
+def test_ensure_git_excluded_is_idempotent(tmp_path):
+    (tmp_path / ".git" / "info").mkdir(parents=True)
+    (tmp_path / ".git" / "info" / "exclude").write_text("*.log\n")
+    assert ensure_git_excluded(str(tmp_path))
+    assert not ensure_git_excluded(str(tmp_path))
+    assert (tmp_path / ".git" / "info" / "exclude").read_text().count(".healer/") == 1
+
+
+def test_ensure_git_excluded_preserves_existing_entries(tmp_path):
+    (tmp_path / ".git" / "info").mkdir(parents=True)
+    (tmp_path / ".git" / "info" / "exclude").write_text("*.log")  # no trailing newline
+    ensure_git_excluded(str(tmp_path))
+    lines = (tmp_path / ".git" / "info" / "exclude").read_text().splitlines()
+    assert lines == ["*.log", ".healer/"]
+
+
+def test_add_event_caps_the_log():
+    journal = Journal()
+    for n in range(MAX_EVENTS + 25):
+        journal.add_event(cycle=n, kind="observe", detail=f"event {n}")
+    assert len(journal.events) == MAX_EVENTS
+    assert journal.events[-1].detail == f"event {MAX_EVENTS + 24}"
+    assert journal.events[0].detail == "event 25"  # oldest dropped
+
+
+def test_events_for_filters_by_cycle():
+    journal = Journal()
+    journal.add_event(1, "observe", "a")
+    journal.add_event(2, "patch", "b")
+    assert [e.detail for e in journal.events_for(2)] == ["b"]
+
+
+def test_timeline_renders_tail_with_elision():
+    journal = Journal()
+    for n in range(30):
+        journal.add_event(cycle=n, kind="observe", detail=f"e{n}")
+    text = journal.timeline(limit=5)
+    assert "25 earlier event(s)" in text
+    assert "e29" in text
+    assert "e0" not in text
+
+
+def test_timeline_empty():
+    assert Journal().timeline() == "(no events recorded)"
