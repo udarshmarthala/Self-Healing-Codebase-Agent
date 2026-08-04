@@ -122,3 +122,20 @@ def test_report_lists_unverified_patches():
     report = generate_report(state, "stall")
     assert "never executed" in report
     assert "Cycle 5: line(s) 11, 12" in report
+
+
+def test_report_omits_continuity_section_for_a_fresh_run():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    assert "Run Continuity" not in generate_report(state, "stall")
+
+
+def test_report_notes_a_resumed_run():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    state.cycle = 6
+    state.mark_resumed()
+    report = generate_report(state, "stall")
+    assert "## Run Continuity" in report
+    assert "resumed from cycle 6" in report
+    assert ".healer/journal.json" in report

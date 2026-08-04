@@ -37,6 +37,7 @@ def generate_report(state: HealerState, exit_reason: str) -> str:
 
     lines += _lint_section(state)
     lines += _coverage_section(state)
+    lines += _resume_section(state)
     lines += ["", "## Root Cause Hypothesis", hypothesis]
     lines += ["", "## Recommended Human Action", recommended_action]
 
@@ -138,6 +139,19 @@ def _coverage_section(state: HealerState) -> list[str]:
             lines.append(f"- Cycle {entry['cycle']}: line(s) {numbers}")
 
     return lines
+
+
+def _resume_section(state: HealerState) -> list[str]:
+    """Note that this run was continued, so the cycle count reads correctly."""
+    if state.resumed_from_cycle is None:
+        return []
+    return [
+        "",
+        "## Run Continuity",
+        f"This run was resumed from cycle {state.resumed_from_cycle} via `--resume`. "
+        f"Cycle numbers above span the whole run, not just this invocation.",
+        f"Journal: `{state.target_repo}/.healer/journal.json`",
+    ]
 
 
 def _root_cause_hypothesis(state: HealerState) -> str:
