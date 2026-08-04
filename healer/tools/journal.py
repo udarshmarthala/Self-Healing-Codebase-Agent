@@ -200,3 +200,34 @@ def check_compatible(journal: Journal, target_repo: str, test_command: str) -> N
     status = journal.state.get("status")
     if status in ("success", "escalated"):
         raise JournalError(f"journal already finished with status {status!r} — nothing to resume")
+
+
+_EXCLUDE_LINE = f"{JOURNAL_DIR}/"
+
+
+def ensure_git_excluded(target_repo: str) -> bool:
+    """Add the journal directory to .git/info/exclude.
+
+    git.commit() stages with `git add -A`, so without this the healer's own
+    journal lands in the user's commits. info/exclude is used rather than
+    .gitignore because it is local-only — the healer must not modify a tracked
+    file in the repo it is healing.
+    """
+    exclude_file = Path(target_repo) / ".git" / "info" / "exclude"
+
+    try:
+        if exclude_file.exists():
+            current = exclude_file.read_text()
+            if _EXCLUDE_LINE in current.splitlines():
+                return False
+            separator = "" if current.endswith("\n") or not current else "\n"
+            exclude_file.write_text(f"{current}{separator}{_EXCLUDE_LINE}\n")
+        else:
+            exclude_file.parent.mkdir(parents=True, exist_ok=True)
+            exclude_file.write_text(f"{_EXCLUDE_LINE}\n")
+    except OSError as e:
+        logger.warning("journal: could not update %s — %s", exclude_file, e)
+        return False
+
+    logger.info("journal: excluded %s from git in %s", _EXCLUDE_LINE, target_repo)
+    return True
