@@ -11,7 +11,7 @@ from healer.agents.fixer import generate_fix
 from healer.agents.reviewer import review_patch
 from healer.escalation import generate_report, write_report
 from healer.state import HealerState
-from healer.tools import coverage, git, linter, patcher
+from healer.tools import coverage, git, journal, linter, patcher
 from healer.tools.runner import run_tests
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,17 @@ def run(state: HealerState) -> HealerState:
     _console.print(Panel(f"[bold green]Self-Healer[/bold green]  target=[cyan]{state.target_repo}[/cyan]  max_cycles=[yellow]{state.max_cycles}[/yellow]"))
 
     git.ensure_git_repo(state.target_repo)
+    journal.ensure_git_excluded(state.target_repo)
+
+    run_journal = journal.Journal()
+    if state.resumed_from_cycle is not None:
+        run_journal.add_event(
+            state.cycle, "resume", f"resumed from cycle {state.resumed_from_cycle}"
+        )
+        _console.print(
+            f"[cyan]Resumed from cycle {state.resumed_from_cycle} "
+            f"({state.cycles_remaining()} cycle(s) left of {state.max_cycles})[/cyan]"
+        )
 
     # Carried across cycles so coverage is measured once per cycle, not twice:
     # this cycle's post-patch measurement is the next cycle's baseline.
@@ -41,10 +52,12 @@ def run(state: HealerState) -> HealerState:
             _console.print("[bold green]✓ All tests pass — SUCCESS[/bold green]")
             logger.info("loop: all tests pass — SUCCESS")
             state.status = "success"
+            _checkpoint(state, run_journal, "verify", "all tests pass")
             return state
 
         _console.print(f"[red]✗ {len(result.failures)} failure(s) detected[/red]")
         logger.info("loop: %d failures detected", len(result.failures))
+        _checkpoint(state, run_journal, "observe", f"{len(result.failures)} failure(s)")
 
         lint_before = _lint(state)
         if lint_before is not None:
@@ -58,11 +71,11 @@ def run(state: HealerState) -> HealerState:
         # Check exit conditions before reasoning
         if state.is_at_max_cycles():
             logger.warning("loop: max cycles reached — escalating")
-            return _escalate(state, f"max_cycles ({state.max_cycles}) reached")
+            return _escalate(state, f"max_cycles ({state.max_cycles}) reached", run_journal)
 
         if state.is_stalled(fingerprint):
             logger.warning("loop: stall detected (same failures 3+ cycles) — escalating")
-            return _escalate(state, "stall (same failures for 3 consecutive cycles)")
+            return _escalate(state, "stall (same failures for 3 consecutive cycles)", run_journal)
 
         # REASON
         previous = [
@@ -88,6 +101,7 @@ def run(state: HealerState) -> HealerState:
             logger.warning("loop: reviewer rejected patch — %s", review.reason)
             # Don't apply; let next cycle try a different strategy
             state.record_patch(patch.file_path, patch.unified_diff, f"REJECTED: {review.reason}")
+            _checkpoint(state, run_journal, "patch", f"rejected: {review.reason}")
             continue
 
         _console.print(f"[green]✓ Reviewer approved (score={review.score}) — applying patch[/green]")
@@ -102,6 +116,7 @@ def run(state: HealerState) -> HealerState:
             logger.error("loop: patch apply failed — %s — rolling back", e)
             git.rollback_to(state.target_repo, sha_before)
             state.record_patch(patch.file_path, patch.unified_diff, f"APPLY_FAILED: {e}")
+            _checkpoint(state, run_journal, "rollback", f"apply failed: {e}")
             continue
 
         # VERIFY — commit only on improvement; otherwise roll back
@@ -136,6 +151,9 @@ def run(state: HealerState) -> HealerState:
                     patch.unified_diff,
                     f"LINT_REGRESSION: {linter.format_issues(delta.introduced, limit=5)}",
                 )
+                _checkpoint(
+                    state, run_journal, "rollback", f"lint regression: {delta.summary()}"
+                )
                 continue
 
         # Coverage is advisory: it never blocks a patch, but an added line the
@@ -168,13 +186,33 @@ def run(state: HealerState) -> HealerState:
             state.record_patch(patch.file_path, patch.unified_diff, patch.rationale)
             _console.print(f"[green]↓ Progress: {prev_count} → {curr_count} failures[/green]")
             logger.info("loop: progress! failures %d → %d", prev_count, curr_count)
+            _checkpoint(
+                state, run_journal, "verify", f"progress {prev_count} → {curr_count} failures"
+            )
         else:
             _console.print("[yellow]↔ No improvement — rolling back[/yellow]")
             logger.warning("loop: no improvement — rolling back")
             git.rollback_to(state.target_repo, sha_before)
             state.record_patch(patch.file_path, patch.unified_diff, f"NO_PROGRESS: {patch.rationale}")
+            _checkpoint(state, run_journal, "rollback", "no improvement")
 
     return state  # unreachable, satisfies type checker
+
+
+def _checkpoint(
+    state: HealerState, run_journal: journal.Journal, kind: str, detail: str
+) -> None:
+    """Record an event and flush the whole state to disk.
+
+    Called at every phase boundary so a run killed mid-cycle can be resumed
+    from the last completed step rather than from scratch. A journal write
+    failure is logged but never aborts the heal itself.
+    """
+    run_journal.add_event(state.cycle, kind, detail)
+    try:
+        journal.save(state.to_dict(), state.target_repo, events=run_journal.events)
+    except journal.JournalError as e:
+        logger.error("loop: journal checkpoint failed — %s", e)
 
 
 def _lint(state: HealerState) -> linter.LintResult | None:
@@ -184,11 +222,15 @@ def _lint(state: HealerState) -> linter.LintResult | None:
     return linter.run_lint(state.lint_command, state.target_repo)
 
 
-def _escalate(state: HealerState, reason: str) -> HealerState:
+def _escalate(
+    state: HealerState, reason: str, run_journal: journal.Journal | None = None
+) -> HealerState:
     state.status = "escalated"
     report = generate_report(state, reason)
     report_path = Path(state.target_repo) / "HEALER_ESCALATION.md"
     write_report(state, reason, str(report_path))
     _console.print(Panel(f"[bold red]ESCALATED[/bold red]  reason=[yellow]{reason}[/yellow]\nReport: {report_path}"))
     logger.error("loop: ESCALATED — %s\nReport: %s\n%s", reason, report_path, report)
+    if run_journal is not None:
+        _checkpoint(state, run_journal, "escalate", reason)
     return state
