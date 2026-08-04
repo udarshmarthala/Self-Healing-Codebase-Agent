@@ -128,3 +128,49 @@ def save(state_dict: dict, target_repo: str, events: list[JournalEvent] | None =
         len(journal.events),
     )
     return path
+
+
+def exists(target_repo: str) -> bool:
+    return journal_path(target_repo).exists()
+
+
+def load(target_repo: str) -> Journal:
+    """Read and validate a journal. Raises JournalError if it cannot be trusted."""
+    path = journal_path(target_repo)
+
+    if not path.exists():
+        raise JournalError(f"no journal at {path} — nothing to resume")
+
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        logger.error("journal: unreadable journal at %s — %s", path, e)
+        raise JournalError(f"journal at {path} is unreadable: {e}") from e
+
+    if not isinstance(raw, dict):
+        raise JournalError(f"journal at {path} is not an object")
+
+    version = raw.get("schema_version")
+    if version != SCHEMA_VERSION:
+        raise JournalError(
+            f"journal at {path} has schema_version {version!r}, expected {SCHEMA_VERSION} — "
+            "delete it to start a fresh run"
+        )
+
+    state = raw.get("state")
+    if not isinstance(state, dict) or not state:
+        raise JournalError(f"journal at {path} carries no state")
+
+    journal = Journal(
+        state=state,
+        events=[JournalEvent.from_dict(e) for e in raw.get("events", []) if isinstance(e, dict)],
+        schema_version=version,
+        updated_at=str(raw.get("updated_at", "")),
+    )
+    logger.info(
+        "journal: loaded cycle %d from %s (%d event(s))",
+        journal.last_cycle(),
+        path,
+        len(journal.events),
+    )
+    return journal
