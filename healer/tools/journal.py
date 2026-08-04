@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -74,3 +78,29 @@ class Journal:
             "state": self.state,
             "events": [e.to_dict() for e in self.events],
         }
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Write via a temp file in the same directory, then os.replace.
+
+    The healer is killed mid-run often enough (Ctrl-C, timeout, crash) that a
+    partially written journal is a real failure mode — and a truncated journal
+    is worse than none, because --resume would trust it.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".journal-", suffix=".tmp")
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except OSError:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def journal_path(target_repo: str) -> Path:
+    return Path(target_repo) / JOURNAL_DIR / JOURNAL_FILENAME
