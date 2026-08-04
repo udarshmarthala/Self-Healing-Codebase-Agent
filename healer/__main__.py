@@ -8,6 +8,7 @@ from pathlib import Path
 
 from healer.loop import run
 from healer.state import HealerState
+from healer.tools import journal
 from healer.tools.coverage import supports_coverage
 from healer.tools.linter import detect_lint_command
 
@@ -31,6 +32,12 @@ def main() -> None:
         "--no-lint",
         action="store_true",
         help="Disable the lint signal entirely (tests are then the only signal)",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Continue the interrupted run recorded in <target>/.healer/journal.json "
+        "instead of starting over (does not raise the max-cycles cap)",
     )
     parser.add_argument(
         "--coverage",
@@ -67,14 +74,17 @@ def main() -> None:
     elif coverage_enabled:
         print("Coverage signal: on")
 
-    state = HealerState(
-        goal=args.goal,
-        target_repo=target,
-        test_command=args.test_cmd,
-        max_cycles=args.max_cycles,
-        lint_command=lint_command,
-        coverage_enabled=coverage_enabled,
-    )
+    if args.resume:
+        state = _resume_state(target, args.test_cmd, lint_command, coverage_enabled)
+    else:
+        state = HealerState(
+            goal=args.goal,
+            target_repo=target,
+            test_command=args.test_cmd,
+            max_cycles=args.max_cycles,
+            lint_command=lint_command,
+            coverage_enabled=coverage_enabled,
+        )
 
     final_state = run(state)
 
@@ -90,6 +100,34 @@ def main() -> None:
         if report_path.exists():
             print(f"  See escalation report: {report_path}")
         sys.exit(1)
+
+
+def _resume_state(
+    target: str, test_cmd: str, lint_command: str | None, coverage_enabled: bool
+) -> HealerState:
+    """Rebuild state from the journal, or exit with a clear reason why not.
+
+    Resuming is refused rather than silently downgraded to a fresh run: a fresh
+    run would re-apply patches already committed and lose the stall history.
+    """
+    try:
+        saved = journal.load(target)
+        journal.check_compatible(saved, target, test_cmd)
+    except journal.JournalError as e:
+        print(f"Cannot resume: {e}")
+        sys.exit(2)
+
+    state = HealerState.from_dict(saved.state)
+    state.mark_resumed()
+    # Signals are runtime switches, not part of the recorded run — honour the
+    # flags given on the resuming invocation.
+    state.lint_command = lint_command
+    state.coverage_enabled = coverage_enabled
+
+    print(f"Resuming from cycle {state.cycle} ({state.cycles_remaining()} cycle(s) left)")
+    if saved.events:
+        print(saved.timeline(limit=5))
+    return state
 
 
 if __name__ == "__main__":
