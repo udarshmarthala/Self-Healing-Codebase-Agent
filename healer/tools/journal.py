@@ -104,3 +104,27 @@ def _atomic_write(path: Path, text: str) -> None:
 
 def journal_path(target_repo: str) -> Path:
     return Path(target_repo) / JOURNAL_DIR / JOURNAL_FILENAME
+
+
+def save(state_dict: dict, target_repo: str, events: list[JournalEvent] | None = None) -> Path:
+    """Persist a state snapshot. Returns the path written.
+
+    Failures are logged and re-raised as JournalError: losing the journal
+    silently would make --resume quietly wrong, which is worse than stopping.
+    """
+    path = journal_path(target_repo)
+    journal = Journal(state=state_dict, events=list(events or []))
+
+    try:
+        _atomic_write(path, json.dumps(journal.to_dict(), indent=2))
+    except (OSError, TypeError) as e:
+        logger.error("journal: failed to write %s — %s", path, e)
+        raise JournalError(f"could not write journal at {path}: {e}") from e
+
+    logger.info(
+        "journal: saved cycle %d to %s (%d event(s))",
+        journal.last_cycle(),
+        path,
+        len(journal.events),
+    )
+    return path
