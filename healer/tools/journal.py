@@ -17,6 +17,10 @@ SCHEMA_VERSION = 1
 JOURNAL_DIR = ".healer"
 JOURNAL_FILENAME = "journal.json"
 
+# A long run with a chatty diagnoser can produce a lot of events; keep the
+# journal bounded so it stays readable and cheap to rewrite every cycle.
+MAX_EVENTS = 500
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -67,9 +71,26 @@ class Journal:
 
     def add_event(self, cycle: int, kind: str, detail: str) -> None:
         self.events.append(JournalEvent(cycle=cycle, kind=kind, detail=detail))
+        if len(self.events) > MAX_EVENTS:
+            # Drop from the front: the oldest cycles are the least useful when
+            # diagnosing why a run stalled or was interrupted.
+            self.events = self.events[-MAX_EVENTS:]
 
     def last_cycle(self) -> int:
         return int(self.state.get("cycle", 0))
+
+    def events_for(self, cycle: int) -> list[JournalEvent]:
+        return [e for e in self.events if e.cycle == cycle]
+
+    def timeline(self, limit: int = 20) -> str:
+        """Human-readable tail of the event log, for reports and --resume output."""
+        if not self.events:
+            return "(no events recorded)"
+        shown = self.events[-limit:]
+        lines = [str(e) for e in shown]
+        if len(self.events) > limit:
+            lines.insert(0, f"...{len(self.events) - limit} earlier event(s)")
+        return "\n".join(lines)
 
     def to_dict(self) -> dict:
         return {
