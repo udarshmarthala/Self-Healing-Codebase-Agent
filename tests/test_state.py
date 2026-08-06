@@ -152,23 +152,6 @@ def test_cycles_remaining_never_negative():
     assert state.cycles_remaining() == 0
 
 
-def test_mark_resumed_records_cycle_without_extending_budget():
-    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest", max_cycles=10)
-    state.cycle = 6
-    state.status = "escalated"
-    state.mark_resumed()
-    assert state.resumed_from_cycle == 6
-    assert state.cycle == 6
-    assert state.max_cycles == 10
-    assert state.status == "in_progress"
-
-
-def test_cycles_remaining_never_negative():
-    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest", max_cycles=5)
-    state.cycle = 7
-    assert state.cycles_remaining == 0
-
-
 def test_resume_metadata_survives_json_roundtrip():
     state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
     state.cycle = 3

@@ -119,7 +119,6 @@ class HealerState:
         self.resumed_from_cycle = self.cycle
         self.status = "in_progress"
 
-    @property
     def cycles_remaining(self) -> int:
         return max(self.max_cycles - self.cycle, 0)
 
