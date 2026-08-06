@@ -207,3 +207,40 @@ def ensure_git_excluded(target_repo: str) -> None:
         logger.info("journal: excluded %s via .git/info/exclude", entry)
     except OSError as e:
         logger.warning("journal: could not update git exclude — %s", e)
+
+
+# Keeps the journal bounded on long runs; the state blackboard remains the
+# complete record, the trail is only for reading back what happened when.
+MAX_EVENTS = 200
+
+
+class Recorder:
+    """Accumulates phase events for a run and checkpoints them alongside state.
+
+    The loop owns one of these. Every checkpoint is a full rewrite of the
+    journal file, so a crash between checkpoints loses at most one cycle.
+    """
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.events: list[JournalEvent] = []
+
+    def record(self, cycle: int, phase: str, detail: str) -> JournalEvent:
+        event = JournalEvent(cycle=cycle, phase=phase, detail=detail)
+        self.events.append(event)
+        if len(self.events) > MAX_EVENTS:
+            self.events = self.events[-MAX_EVENTS:]
+        logger.debug("journal: %s", event)
+        return event
+
+    def checkpoint(self, state_dict: dict[str, Any]) -> None:
+        save(state_dict, self.path, self.events)
+
+    def adopt(self, events: list[JournalEvent]) -> None:
+        """Carry a resumed run's earlier events forward so the trail stays whole."""
+        self.events = (events + self.events)[-MAX_EVENTS:]
+
+    def trail(self, limit: int = 20) -> str:
+        if not self.events:
+            return "(no events recorded)"
+        return "\n".join(str(e) for e in self.events[-limit:])
