@@ -76,6 +76,12 @@ class Journal:
     def last_cycle(self) -> int:
         return int(self.state.get("cycle", 0))
 
+    def timeline(self, limit: int = 20) -> str:
+        """The most recent events, oldest first — what a resuming run prints."""
+        if not self.events:
+            return "(no events recorded)"
+        return "\n".join(f"  {e}" for e in self.events[-limit:])
+
 
 def journal_path(target_repo: str) -> str:
     """Journal location for a target repo: <target>/.healer/journal.json."""

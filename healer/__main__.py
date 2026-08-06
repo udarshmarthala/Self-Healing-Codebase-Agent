@@ -74,8 +74,10 @@ def main() -> None:
     elif coverage_enabled:
         print("Coverage signal: on")
 
+    resumed_events: list[journal.JournalEvent] = []
+
     if args.resume:
-        state = _resume_state(target, args.test_cmd, lint_command, coverage_enabled)
+        state, resumed_events = _resume_state(target, args.test_cmd, lint_command, coverage_enabled)
     else:
         state = HealerState(
             goal=args.goal,
@@ -86,7 +88,7 @@ def main() -> None:
             coverage_enabled=coverage_enabled,
         )
 
-    final_state = run(state)
+    final_state = run(state, resumed_events=resumed_events)
 
     if args.state_out:
         Path(args.state_out).write_text(final_state.to_json())
@@ -104,17 +106,25 @@ def main() -> None:
 
 def _resume_state(
     target: str, test_cmd: str, lint_command: str | None, coverage_enabled: bool
-) -> HealerState:
+) -> tuple[HealerState, list[journal.JournalEvent]]:
     """Rebuild state from the journal, or exit with a clear reason why not.
 
     Resuming is refused rather than silently downgraded to a fresh run: a fresh
     run would re-apply patches already committed and lose the stall history.
     """
     try:
-        saved = journal.load(target)
-        journal.check_compatible(saved, target, test_cmd)
+        saved = journal.load(journal.journal_path(target))
+        journal.assert_compatible(saved, target, test_cmd)
     except journal.JournalError as e:
-        print(f"Cannot resume: {e}")
+        print(f"Cannot resume: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    if journal.is_exhausted(saved):
+        print(
+            f"Cannot resume: that run already used all {saved.state.get('max_cycles')} cycles. "
+            f"max_cycles caps the whole run across resumes — start a fresh run to go further.",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     state = HealerState.from_dict(saved.state)
@@ -127,7 +137,7 @@ def _resume_state(
     print(f"Resuming from cycle {state.cycle} ({state.cycles_remaining()} cycle(s) left)")
     if saved.events:
         print(saved.timeline(limit=5))
-    return state
+    return state, saved.events
 
 
 if __name__ == "__main__":
