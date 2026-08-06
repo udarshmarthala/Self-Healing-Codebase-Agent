@@ -18,16 +18,21 @@ logger = logging.getLogger(__name__)
 _console = Console()
 
 
-def run(state: HealerState) -> HealerState:
+def run(
+    state: HealerState,
+    resumed_events: list[journal.JournalEvent] | None = None,
+) -> HealerState:
     logger.info("loop: start — target=%s cmd=%r max_cycles=%d", state.target_repo, state.test_command, state.max_cycles)
     _console.print(Panel(f"[bold green]Self-Healer[/bold green]  target=[cyan]{state.target_repo}[/cyan]  max_cycles=[yellow]{state.max_cycles}[/yellow]"))
 
     git.ensure_git_repo(state.target_repo)
     journal.ensure_git_excluded(state.target_repo)
 
-    run_journal = journal.Journal()
+    run_journal = journal.Recorder(journal.journal_path(state.target_repo))
+    if resumed_events:
+        run_journal.adopt(resumed_events)
     if state.resumed_from_cycle is not None:
-        run_journal.add_event(
+        run_journal.record(
             state.cycle, "resume", f"resumed from cycle {state.resumed_from_cycle}"
         )
         _console.print(
@@ -53,6 +58,7 @@ def run(state: HealerState) -> HealerState:
             logger.info("loop: all tests pass — SUCCESS")
             state.status = "success"
             _checkpoint(state, run_journal, "verify", "all tests pass")
+            journal.clear(run_journal.path)
             return state
 
         _console.print(f"[red]✗ {len(result.failures)} failure(s) detected[/red]")
@@ -89,6 +95,8 @@ def run(state: HealerState) -> HealerState:
             previous_diagnoses=previous,
         )
 
+        _checkpoint(state, run_journal, "reason", diagnosis.root_cause[:120])
+
         # ACT
         sha_before = git.current_sha(state.target_repo)
         patch = generate_fix(diagnosis, state.target_repo, state.cycle)
@@ -104,6 +112,7 @@ def run(state: HealerState) -> HealerState:
             _checkpoint(state, run_journal, "patch", f"rejected: {review.reason}")
             continue
 
+        _checkpoint(state, run_journal, "act", f"applying patch to {patch.file_path}")
         _console.print(f"[green]✓ Reviewer approved (score={review.score}) — applying patch[/green]")
         logger.info("loop: reviewer approved (score=%d) — applying patch", review.score)
 
@@ -200,7 +209,7 @@ def run(state: HealerState) -> HealerState:
 
 
 def _checkpoint(
-    state: HealerState, run_journal: journal.Journal, kind: str, detail: str
+    state: HealerState, run_journal: journal.Recorder, kind: str, detail: str
 ) -> None:
     """Record an event and flush the whole state to disk.
 
@@ -208,11 +217,8 @@ def _checkpoint(
     from the last completed step rather than from scratch. A journal write
     failure is logged but never aborts the heal itself.
     """
-    run_journal.add_event(state.cycle, kind, detail)
-    try:
-        journal.save(state.to_dict(), state.target_repo, events=run_journal.events)
-    except journal.JournalError as e:
-        logger.error("loop: journal checkpoint failed — %s", e)
+    run_journal.record(state.cycle, kind, detail)
+    run_journal.checkpoint(state.to_dict())
 
 
 def _lint(state: HealerState) -> linter.LintResult | None:
@@ -223,7 +229,7 @@ def _lint(state: HealerState) -> linter.LintResult | None:
 
 
 def _escalate(
-    state: HealerState, reason: str, run_journal: journal.Journal | None = None
+    state: HealerState, reason: str, run_journal: journal.Recorder | None = None
 ) -> HealerState:
     state.status = "escalated"
     report = generate_report(state, reason)
