@@ -139,3 +139,22 @@ def test_report_notes_a_resumed_run():
     assert "## Run Continuity" in report
     assert "resumed from cycle 6" in report
     assert ".healer/journal.json" in report
+
+
+def test_report_omits_resume_line_for_a_fresh_run():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    report = generate_report(state, "max_cycles")
+    assert "Resumed From" not in report
+    assert "Run Continuity" not in report
+
+
+def test_report_notes_a_resumed_run():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.cycle = 6
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    state.mark_resumed()
+    report = generate_report(state, "stall")
+    assert "**Resumed From:** cycle 6" in report
+    assert "## Run Continuity" in report
+    assert ".healer/journal.json" in report

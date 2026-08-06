@@ -16,6 +16,12 @@ def generate_report(state: HealerState, exit_reason: str) -> str:
         "",
         f"**Target:** {state.target_repo}",
         f"**Cycles Run:** {state.cycle} / {state.max_cycles}",
+        *(
+            [f"**Resumed From:** cycle {state.resumed_from_cycle} "
+             f"(the cap covers the whole run, not each resume)"]
+            if state.resumed_from_cycle is not None
+            else []
+        ),
         f"**Exit Reason:** {exit_reason}",
         f"**Timestamp:** {datetime.utcnow().isoformat()}Z",
         "",
@@ -148,9 +154,8 @@ def _resume_section(state: HealerState) -> list[str]:
     return [
         "",
         "## Run Continuity",
-        f"This run was resumed from cycle {state.resumed_from_cycle} via `--resume`. "
-        f"Cycle numbers above span the whole run, not just this invocation.",
-        f"Journal: `{state.target_repo}/.healer/journal.json`",
+        f"Journal: `{state.target_repo}/.healer/journal.json` — "
+        f"re-run with `--resume` to continue from here, budget permitting.",
     ]
 
 
