@@ -102,3 +102,48 @@ def _atomic_write(path: str, text: str) -> None:
     except BaseException:
         Path(tmp_path).unlink(missing_ok=True)
         raise
+
+
+def save(state_dict: dict[str, Any], path: str, events: list[JournalEvent] | None = None) -> None:
+    """Persist a state snapshot. Never raises on write failure — losing the
+    journal must not kill an otherwise healthy run, but it is always logged."""
+    journal = Journal(version=SCHEMA_VERSION, state=state_dict, events=events or [])
+    try:
+        _atomic_write(path, json.dumps(journal.to_dict(), indent=2))
+        logger.info("journal: saved cycle %d to %s", journal.last_cycle, path)
+    except OSError as e:
+        logger.error("journal: could not write %s — %s (run continues)", path, e)
+
+
+def load(path: str) -> Journal:
+    """Read a journal. Raises JournalError on anything suspect — callers that
+    resume must not proceed on a journal they cannot fully trust."""
+    file = Path(path)
+    if not file.exists():
+        raise JournalError(f"no journal at {path}")
+
+    try:
+        raw = file.read_text()
+    except OSError as e:
+        raise JournalError(f"could not read {path}: {e}") from e
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise JournalError(f"journal at {path} is corrupt or truncated: {e}") from e
+
+    if not isinstance(data, dict):
+        raise JournalError(f"journal at {path} is not a JSON object")
+
+    journal = Journal.from_dict(data)
+
+    if journal.version != SCHEMA_VERSION:
+        raise JournalError(
+            f"journal at {path} has schema version {journal.version}, "
+            f"this healer writes version {SCHEMA_VERSION}"
+        )
+    if not journal.state:
+        raise JournalError(f"journal at {path} carries no state")
+
+    logger.info("journal: loaded cycle %d from %s", journal.last_cycle, path)
+    return journal
