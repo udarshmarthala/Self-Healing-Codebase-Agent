@@ -10,6 +10,7 @@ from healer.tools.journal import (
     JournalEvent,
     Recorder,
     assert_compatible,
+    clear,
     ensure_git_excluded,
     is_exhausted,
     journal_path,
@@ -218,3 +219,15 @@ def test_recorder_trail_renders_recent_events(tmp_path):
     assert "no events" in recorder.trail()
     recorder.record(2, "act", "patched a.py")
     assert "cycle 2 [act] patched a.py" in recorder.trail()
+
+
+def test_clear_removes_journal(tmp_path):
+    path = str(tmp_path / "journal.json")
+    save(make_state().to_dict(), path)
+    clear(path)
+    with pytest.raises(JournalError, match="no journal"):
+        load(path)
+
+
+def test_clear_is_safe_when_absent(tmp_path):
+    clear(str(tmp_path / "never-written.json"))  # must not raise

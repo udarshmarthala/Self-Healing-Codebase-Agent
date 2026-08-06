@@ -149,6 +149,19 @@ def load(path: str) -> Journal:
     return journal
 
 
+def clear(path: str) -> None:
+    """Remove a journal once its run has finished.
+
+    A stale journal from a completed run is a trap: a later --resume would find
+    it and either refuse confusingly or resume something already done.
+    """
+    try:
+        Path(path).unlink(missing_ok=True)
+        logger.info("journal: cleared %s", path)
+    except OSError as e:
+        logger.warning("journal: could not clear %s — %s", path, e)
+
+
 def assert_compatible(journal: Journal, target_repo: str, test_command: str) -> None:
     """Refuse to resume a journal that describes a different run.
 
