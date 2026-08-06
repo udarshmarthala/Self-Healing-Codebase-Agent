@@ -231,3 +231,53 @@ def test_clear_removes_journal(tmp_path):
 
 def test_clear_is_safe_when_absent(tmp_path):
     clear(str(tmp_path / "never-written.json"))  # must not raise
+
+
+def test_timeline_renders_recent_events():
+    journal = Journal(state={"cycle": 2}, events=[JournalEvent(2, "act", "patched a.py")])
+    assert "cycle 2 [act] patched a.py" in journal.timeline()
+
+
+def test_timeline_without_events():
+    assert "no events" in Journal(state={"cycle": 1}).timeline()
+
+
+def _write_journal(tmp_path, **overrides):
+    state = make_state(max_cycles=10)
+    state.cycle = overrides.pop("cycle", 4)
+    for key, value in overrides.items():
+        setattr(state, key, value)
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    path = journal_path(str(tmp_path))
+    save(state.to_dict(), path, [JournalEvent(state.cycle, "observe", "1 failure")])
+    return path, state
+
+
+def test_resume_restores_cycle_and_fingerprints(tmp_path):
+    path, original = _write_journal(tmp_path)
+    saved = load(path)
+    assert_compatible(saved, original.target_repo, "pytest")
+
+    resumed = HealerState.from_dict(saved.state)
+    resumed.mark_resumed()
+
+    assert resumed.cycle == 4
+    assert resumed.resumed_from_cycle == 4
+    assert resumed.error_fingerprints == original.error_fingerprints
+    assert resumed.cycles_remaining() == 6
+
+
+def test_resume_of_exhausted_run_is_refused(tmp_path):
+    path, _ = _write_journal(tmp_path, cycle=10)
+    assert is_exhausted(load(path))
+
+
+def test_resumed_state_keeps_prior_patch_history(tmp_path):
+    state = make_state()
+    state.cycle = 2
+    state.record_patch("a.py", "diff", "first attempt")
+    path = journal_path(str(tmp_path))
+    save(state.to_dict(), path)
+
+    resumed = HealerState.from_dict(load(path).state)
+    assert [p["rationale"] for p in resumed.patches_applied] == ["first attempt"]
