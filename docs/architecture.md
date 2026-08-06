@@ -71,12 +71,14 @@ Typed dataclass. All inter-cycle memory lives here. Passed by reference; agents 
 - Advisory: never blocks a patch; removes its own artifacts before git stages
 
 ### tools/journal.py
-- Persists the full state plus an ordered event log to `<target>/.healer/journal.json`
+- Persists the full state blackboard plus a phase-event trail to
+  `<target>/.healer/journal.json`, checkpointed at every phase boundary
 - Atomic writes (temp file + `os.replace` + fsync); schema-versioned
-- `check_compatible()` refuses a journal from a different repo, a different
+- `assert_compatible()` refuses a journal from a different repo, a different
   test command, or an already-finished run
-- Registers `.healer/` in `.git/info/exclude` so `git add -A` never stages it
-- Loud on failure: raises `JournalError` instead of degrading silently
+- `is_exhausted()` keeps `max_cycles` capping the run across resumes
+- The one tool that raises rather than degrading: `JournalError` -> `--resume` exits 2
+- Cleared on success; registered in `.git/info/exclude` so `git add -A` never stages it
 
 ### tools/git.py
 - Thin wrapper over subprocess git
