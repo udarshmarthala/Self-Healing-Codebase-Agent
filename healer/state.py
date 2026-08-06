@@ -23,6 +23,7 @@ class HealerState:
     coverage_enabled: bool = False
     coverage_by_cycle: list[dict] = field(default_factory=list)
     resumed_from_cycle: int | None = None
+    resumed_from_cycle: int | None = None
 
     def record_cycle_result(self, test_output: str, exit_code: int, failures: list[str]) -> str:
         fingerprint = _fingerprint(failures)
@@ -108,6 +109,19 @@ class HealerState:
 
     def is_at_max_cycles(self) -> bool:
         return self.cycle >= self.max_cycles
+
+    def mark_resumed(self) -> None:
+        """Flag this state as continuing an interrupted run.
+
+        Deliberately does not touch `cycle` or `max_cycles`: the cap covers the
+        whole run across resumes, so resuming can never buy extra cycles.
+        """
+        self.resumed_from_cycle = self.cycle
+        self.status = "in_progress"
+
+    @property
+    def cycles_remaining(self) -> int:
+        return max(self.max_cycles - self.cycle, 0)
 
     def to_dict(self) -> dict:
         d = {k: v for k, v in self.__dict__.items()}
