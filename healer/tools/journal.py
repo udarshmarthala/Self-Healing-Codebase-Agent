@@ -147,3 +147,36 @@ def load(path: str) -> Journal:
 
     logger.info("journal: loaded cycle %d from %s", journal.last_cycle, path)
     return journal
+
+
+def assert_compatible(journal: Journal, target_repo: str, test_command: str) -> None:
+    """Refuse to resume a journal that describes a different run.
+
+    Carrying over error fingerprints and the stall counter from a different
+    repo or test command would corrupt stall detection: the loop would compare
+    failure signatures that were never comparable.
+    """
+    recorded_repo = str(journal.state.get("target_repo", ""))
+    recorded_cmd = str(journal.state.get("test_command", ""))
+
+    if recorded_repo != target_repo:
+        raise JournalError(
+            f"journal is for target repo {recorded_repo!r}, but this run targets {target_repo!r}"
+        )
+    if recorded_cmd != test_command:
+        raise JournalError(
+            f"journal used test command {recorded_cmd!r}, but this run uses {test_command!r}"
+        )
+
+    status = journal.state.get("status")
+    if status in ("success", "escalated"):
+        raise JournalError(f"journal describes a finished run (status={status}) — nothing to resume")
+
+
+def is_exhausted(journal: Journal) -> bool:
+    """True when the journalled run already used its whole cycle budget.
+
+    max_cycles caps the entire run across resumes — resuming must not become a
+    back door around the cap.
+    """
+    return journal.last_cycle >= int(journal.state.get("max_cycles", 0))
