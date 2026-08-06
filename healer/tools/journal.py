@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -71,3 +75,30 @@ class Journal:
     @property
     def last_cycle(self) -> int:
         return int(self.state.get("cycle", 0))
+
+
+def journal_path(target_repo: str) -> str:
+    """Journal location for a target repo: <target>/.healer/journal.json."""
+    return str(Path(target_repo) / JOURNAL_DIRNAME / JOURNAL_FILENAME)
+
+
+def _atomic_write(path: str, text: str) -> None:
+    """Write via a temp file in the same directory + os.replace.
+
+    A journal truncated by a crash mid-write is worse than a missing one,
+    because --resume would read it and trust it. os.replace is atomic on the
+    same filesystem, so readers see either the old file or the complete new one.
+    """
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, tmp_path = tempfile.mkstemp(dir=str(destination.parent), prefix=".journal-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, destination)
+    except BaseException:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
