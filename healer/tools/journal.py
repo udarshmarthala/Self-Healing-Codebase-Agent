@@ -180,3 +180,30 @@ def is_exhausted(journal: Journal) -> bool:
     back door around the cap.
     """
     return journal.last_cycle >= int(journal.state.get("max_cycles", 0))
+
+
+def ensure_git_excluded(target_repo: str) -> None:
+    """Exclude the journal directory from the target repo's git index.
+
+    git.commit() stages with `git add -A`, so the journal would otherwise be
+    committed into the user's history. This writes to .git/info/exclude rather
+    than .gitignore: the journal is local scaffolding, and the healer must
+    never modify a tracked file in the repo it is healing.
+    """
+    exclude_file = Path(target_repo) / ".git" / "info" / "exclude"
+    entry = f"{JOURNAL_DIRNAME}/"
+
+    try:
+        if not exclude_file.parent.exists():
+            logger.info("journal: %s has no .git/info — skipping exclude", target_repo)
+            return
+
+        existing = exclude_file.read_text() if exclude_file.exists() else ""
+        if entry in existing.splitlines():
+            return
+
+        separator = "" if existing.endswith("\n") or not existing else "\n"
+        exclude_file.write_text(f"{existing}{separator}{entry}\n")
+        logger.info("journal: excluded %s via .git/info/exclude", entry)
+    except OSError as e:
+        logger.warning("journal: could not update git exclude — %s", e)
