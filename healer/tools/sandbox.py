@@ -163,3 +163,20 @@ def sandbox(
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)
         logger.debug("sandbox: removed %s", temp_root)
+
+
+def rewrite_paths(text: str, sandbox_path: str, target_repo: str) -> str:
+    """Map sandbox paths in test output back to the real repo.
+
+    Without this the diagnoser reads tracebacks pointing at a temp directory
+    that no longer exists, and the fixer would try to patch files there — so
+    every patch would target a path outside the repo and the reviewer's scope
+    guard would reject it.
+    """
+    if not sandbox_path:
+        return text
+    return text.replace(sandbox_path, target_repo)
+
+
+def rewrite_failures(failures: list[str], sandbox_path: str, target_repo: str) -> list[str]:
+    return [rewrite_paths(f, sandbox_path, target_repo) for f in failures]
