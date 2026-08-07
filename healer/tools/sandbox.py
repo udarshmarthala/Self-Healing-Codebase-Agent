@@ -3,6 +3,9 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -113,3 +116,50 @@ def copy_tree(source: str, destination: str, ignores: tuple[str, ...] = DEFAULT_
         dirs_exist_ok=True,
     )
     return copied
+
+
+@contextmanager
+def sandbox(
+    target_repo: str,
+    max_mb: int = DEFAULT_MAX_MB,
+    ignores: tuple[str, ...] = DEFAULT_IGNORES,
+) -> Iterator[SandboxResult]:
+    """Yield an isolated copy of the repo, always cleaned up on exit.
+
+    Declines rather than raises: if the repo is too large or the copy fails,
+    the result reports `used=False` and the caller runs against the real repo.
+    Isolation is an optimisation on safety, never a precondition for healing.
+    """
+    limit_bytes = max_mb * 1024 * 1024
+    files, total = measure_tree(target_repo, ignores, limit_bytes=limit_bytes)
+
+    if total > limit_bytes:
+        reason = f"repo exceeds {max_mb} MB (measured at least {total / (1024 * 1024):.0f} MB)"
+        logger.warning("sandbox: declined — %s", reason)
+        yield SandboxResult(path=None, used=False, reason=reason)
+        return
+
+    temp_root = tempfile.mkdtemp(prefix="healer-sandbox-")
+    destination = str(Path(temp_root) / Path(target_repo).name)
+
+    try:
+        copied = copy_tree(target_repo, destination, ignores)
+    except OSError as e:
+        shutil.rmtree(temp_root, ignore_errors=True)
+        logger.error("sandbox: copy failed — %s (running in place instead)", e)
+        yield SandboxResult(path=None, used=False, reason=f"copy failed: {e}")
+        return
+
+    result = SandboxResult(
+        path=destination,
+        used=True,
+        files_copied=copied,
+        bytes_copied=total,
+    )
+    logger.info("sandbox: %s", result.summary())
+
+    try:
+        yield result
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+        logger.debug("sandbox: removed %s", temp_root)
