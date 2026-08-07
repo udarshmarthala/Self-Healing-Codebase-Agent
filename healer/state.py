@@ -23,7 +23,11 @@ class HealerState:
     coverage_enabled: bool = False
     coverage_by_cycle: list[dict] = field(default_factory=list)
     resumed_from_cycle: int | None = None
+    sandbox_enabled: bool = False
+    sandbox_by_cycle: list[dict] = field(default_factory=list)
     resumed_from_cycle: int | None = None
+    sandbox_enabled: bool = False
+    sandbox_by_cycle: list[dict] = field(default_factory=list)
 
     def record_cycle_result(self, test_output: str, exit_code: int, failures: list[str]) -> str:
         fingerprint = _fingerprint(failures)
@@ -90,6 +94,19 @@ class HealerState:
             "untested_patch_lines": (untested_patch_lines or [])[:50],
             "files_declined": (files_declined or [])[:20],
         })
+
+    def record_sandbox_result(self, used: bool, reason: str = "", files: int = 0) -> None:
+        """Store whether a cycle's verification ran isolated, and why not if it didn't."""
+        self.sandbox_by_cycle.append({
+            "cycle": self.cycle,
+            "used": used,
+            "reason": reason,
+            "files_copied": files,
+        })
+
+    def unsandboxed_cycles(self) -> list[dict]:
+        """Cycles verified against the real repo because the sandbox was declined."""
+        return [c for c in self.sandbox_by_cycle if not c["used"]]
 
     def unverified_patches(self) -> list[dict]:
         """Cycles whose patch added lines the test suite never executed."""

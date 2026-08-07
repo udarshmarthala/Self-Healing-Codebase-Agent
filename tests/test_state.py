@@ -158,3 +158,31 @@ def test_resume_metadata_survives_json_roundtrip():
     state.mark_resumed()
     restored = HealerState.from_dict(json.loads(state.to_json()))
     assert restored.resumed_from_cycle == 3
+
+
+def test_record_sandbox_result_stores_snapshot():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.cycle = 3
+    state.record_sandbox_result(used=True, files=12)
+    entry = state.sandbox_by_cycle[0]
+    assert entry["cycle"] == 3
+    assert entry["used"] is True
+    assert entry["files_copied"] == 12
+
+
+def test_unsandboxed_cycles_lists_only_declined_ones():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_sandbox_result(used=True, files=5)
+    state.cycle = 2
+    state.record_sandbox_result(used=False, reason="repo exceeds 500 MB")
+    assert [c["cycle"] for c in state.unsandboxed_cycles()] == [2]
+
+
+def test_sandbox_fields_survive_json_roundtrip():
+    state = HealerState(
+        goal="g", target_repo="/tmp/r", test_command="pytest", sandbox_enabled=True
+    )
+    state.record_sandbox_result(used=False, reason="copy failed")
+    restored = HealerState.from_dict(json.loads(state.to_json()))
+    assert restored.sandbox_enabled
+    assert restored.sandbox_by_cycle[0]["reason"] == "copy failed"
