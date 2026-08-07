@@ -9,6 +9,7 @@ from healer.tools.sandbox import (
     gitignored_dirs,
     is_ignored,
     measure_tree,
+    rewrite_command,
     rewrite_failures,
     rewrite_paths,
     run_tests_isolated,
@@ -202,3 +203,30 @@ def test_sandbox_skips_gitignored_directories(tmp_path):
     with sandbox(str(repo)) as box:
         assert not (Path(box.path) / "scratch").exists()
         assert (Path(box.path) / "mod.py").exists()
+
+
+def test_rewrite_command_redirects_absolute_paths():
+    cmd = rewrite_command("pytest /work/repo/tests -v", "/work/repo", "/box/repo")
+    assert cmd == "pytest /box/repo/tests -v"
+
+
+def test_rewrite_command_leaves_relative_commands_alone():
+    assert rewrite_command("pytest tests -v", "/work/repo", "/box/repo") == "pytest tests -v"
+
+
+def test_isolation_holds_for_an_absolute_test_path(tmp_path):
+    """An absolute path in the command must not escape back to the real repo."""
+    repo = build_repo(tmp_path / "repo")
+    (repo / "test_writer.py").write_text(
+        "from pathlib import Path\n"
+        "def test_writes():\n"
+        "    Path(__file__).parent.joinpath('SIDE_EFFECT.txt').write_text('x')\n"
+    )
+
+    result, box = run_tests_isolated(
+        f"{sys.executable} -m pytest {repo}/test_writer.py -p no:cacheprovider", str(repo)
+    )
+    assert result.exit_code == 0
+    assert box.used
+    # The test wrote a file; it must have landed in the sandbox, not the repo.
+    assert not (repo / "SIDE_EFFECT.txt").exists()

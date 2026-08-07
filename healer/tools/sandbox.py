@@ -220,6 +220,21 @@ def rewrite_failures(failures: list[str], sandbox_path: str, target_repo: str) -
     return [rewrite_paths(f, sandbox_path, target_repo) for f in failures]
 
 
+def rewrite_command(test_command: str, target_repo: str, sandbox_path: str) -> str:
+    """Point absolute references to the target repo at the sandbox instead.
+
+    A command like `pytest /work/repo/tests` would otherwise run against the
+    real repo even though cwd is the sandbox — silently defeating isolation
+    while still reporting success.
+    """
+    if target_repo not in test_command:
+        return test_command
+
+    rewritten = test_command.replace(target_repo, sandbox_path)
+    logger.info("sandbox: rewrote test command to stay inside the sandbox")
+    return rewritten
+
+
 def run_tests_isolated(
     test_command: str,
     target_repo: str,
@@ -237,7 +252,8 @@ def run_tests_isolated(
             result = run_tests(test_command, target_repo, timeout=timeout)
             return result, box
 
-        result = run_tests(test_command, box.path, timeout=timeout)
+        command = rewrite_command(test_command, target_repo, box.path)
+        result = run_tests(command, box.path, timeout=timeout)
         rewritten = RunResult(
             exit_code=result.exit_code,
             output=rewrite_paths(result.output, box.path, target_repo),
