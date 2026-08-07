@@ -24,9 +24,7 @@ class HealerState:
     coverage_by_cycle: list[dict] = field(default_factory=list)
     resumed_from_cycle: int | None = None
     sandbox_enabled: bool = False
-    sandbox_by_cycle: list[dict] = field(default_factory=list)
-    resumed_from_cycle: int | None = None
-    sandbox_enabled: bool = False
+    sandbox_max_mb: int = 500
     sandbox_by_cycle: list[dict] = field(default_factory=list)
 
     def record_cycle_result(self, test_output: str, exit_code: int, failures: list[str]) -> str:

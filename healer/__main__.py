@@ -8,7 +8,7 @@ from pathlib import Path
 
 from healer.loop import run
 from healer.state import HealerState
-from healer.tools import journal
+from healer.tools import journal, sandbox
 from healer.tools.coverage import supports_coverage
 from healer.tools.linter import detect_lint_command
 
@@ -38,6 +38,18 @@ def main() -> None:
         action="store_true",
         help="Continue the interrupted run recorded in <target>/.healer/journal.json "
         "instead of starting over (does not raise the max-cycles cap)",
+    )
+    parser.add_argument(
+        "--sandbox",
+        action="store_true",
+        help="Verify patches against a throwaway copy of the repo so test side effects "
+        "cannot touch it (costs one copy per cycle)",
+    )
+    parser.add_argument(
+        "--sandbox-max-mb",
+        type=int,
+        default=sandbox.DEFAULT_MAX_MB,
+        help="Skip the sandbox for repos larger than this, verifying in place instead",
     )
     parser.add_argument(
         "--coverage",
@@ -74,10 +86,20 @@ def main() -> None:
     elif coverage_enabled:
         print("Coverage signal: on")
 
+    if args.sandbox:
+        print(f"Sandbox: on (max {args.sandbox_max_mb} MB)")
+
     resumed_events: list[journal.JournalEvent] = []
 
     if args.resume:
-        state, resumed_events = _resume_state(target, args.test_cmd, lint_command, coverage_enabled)
+        state, resumed_events = _resume_state(
+            target,
+            args.test_cmd,
+            lint_command,
+            coverage_enabled,
+            args.sandbox,
+            args.sandbox_max_mb,
+        )
     else:
         state = HealerState(
             goal=args.goal,
@@ -86,6 +108,8 @@ def main() -> None:
             max_cycles=args.max_cycles,
             lint_command=lint_command,
             coverage_enabled=coverage_enabled,
+            sandbox_enabled=args.sandbox,
+            sandbox_max_mb=args.sandbox_max_mb,
         )
 
     final_state = run(state, resumed_events=resumed_events)
@@ -105,7 +129,12 @@ def main() -> None:
 
 
 def _resume_state(
-    target: str, test_cmd: str, lint_command: str | None, coverage_enabled: bool
+    target: str,
+    test_cmd: str,
+    lint_command: str | None,
+    coverage_enabled: bool,
+    sandbox_enabled: bool,
+    sandbox_max_mb: int,
 ) -> tuple[HealerState, list[journal.JournalEvent]]:
     """Rebuild state from the journal, or exit with a clear reason why not.
 
@@ -133,6 +162,8 @@ def _resume_state(
     # flags given on the resuming invocation.
     state.lint_command = lint_command
     state.coverage_enabled = coverage_enabled
+    state.sandbox_enabled = sandbox_enabled
+    state.sandbox_max_mb = sandbox_max_mb
 
     print(f"Resuming from cycle {state.cycle} ({state.cycles_remaining()} cycle(s) left)")
     if saved.events:

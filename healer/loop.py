@@ -133,7 +133,9 @@ def run(
         # test that corrupts state or writes stray files cannot damage the repo
         # before we have decided whether to keep the patch.
         if state.sandbox_enabled:
-            verify, box = sandbox.run_tests_isolated(state.test_command, state.target_repo)
+            verify, box = sandbox.run_tests_isolated(
+                state.test_command, state.target_repo, max_mb=state.sandbox_max_mb
+            )
             state.record_sandbox_result(box.used, box.reason, box.files_copied)
             if not box.used:
                 _console.print(f"[yellow]⚠ {box.summary()}[/yellow]")
