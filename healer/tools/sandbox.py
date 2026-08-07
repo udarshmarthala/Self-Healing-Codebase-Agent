@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -88,3 +89,27 @@ def measure_tree(
                 return files, total
 
     return files, total
+
+
+def copy_tree(source: str, destination: str, ignores: tuple[str, ...] = DEFAULT_IGNORES) -> int:
+    """Copy a working tree into an empty destination. Returns files copied.
+
+    Symlinks are recreated as symlinks rather than followed: following them
+    could pull in gigabytes from outside the repo, or escape it entirely.
+    """
+    copied = 0
+
+    def _ignore(_dir: str, names: list[str]) -> set[str]:
+        nonlocal copied
+        skipped = {n for n in names if is_ignored(n, ignores)}
+        copied += len(names) - len(skipped)
+        return skipped
+
+    shutil.copytree(
+        source,
+        destination,
+        symlinks=True,
+        ignore=_ignore,
+        dirs_exist_ok=True,
+    )
+    return copied
