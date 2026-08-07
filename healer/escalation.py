@@ -43,6 +43,7 @@ def generate_report(state: HealerState, exit_reason: str) -> str:
 
     lines += _lint_section(state)
     lines += _coverage_section(state)
+    lines += _sandbox_section(state)
     lines += _resume_section(state)
     lines += ["", "## Root Cause Hypothesis", hypothesis]
     lines += ["", "## Recommended Human Action", recommended_action]
@@ -144,6 +145,23 @@ def _coverage_section(state: HealerState) -> list[str]:
             numbers = ", ".join(str(n) for n in entry["untested_patch_lines"][:10])
             lines.append(f"- Cycle {entry['cycle']}: line(s) {numbers}")
 
+    return lines
+
+
+def _sandbox_section(state: HealerState) -> list[str]:
+    """Only worth reporting when isolation was requested but not achieved."""
+    declined = state.unsandboxed_cycles()
+    if not declined:
+        return []
+
+    lines = [
+        "",
+        "## Sandbox",
+        "These cycles were verified against the real repo because isolation was "
+        "declined — any test side effects landed in your working tree:",
+    ]
+    for entry in declined:
+        lines.append(f"- Cycle {entry['cycle']}: {entry['reason'] or 'unknown reason'}")
     return lines
 
 

@@ -80,6 +80,13 @@ Typed dataclass. All inter-cycle memory lives here. Passed by reference; agents 
 - The one tool that raises rather than degrading: `JournalError` -> `--resume` exits 2
 - Cleared on success; registered in `.git/info/exclude` so `git add -A` never stages it
 
+### tools/sandbox.py
+- Copies the working tree (uncommitted changes included) to a temp dir
+- Skips regenerable dirs plus any plain directory the repo's .gitignore lists
+- Runs observe and verify there, then removes the copy — always, even on exception
+- Rewrites paths both ways: repo -> sandbox in the command, sandbox -> repo in output
+- Declines above `--sandbox-max-mb` and falls back to running in place
+
 ### tools/git.py
 - Thin wrapper over subprocess git
 - `commit`, `diff`, `current_sha`, `rollback_to`, `ensure_git_repo`

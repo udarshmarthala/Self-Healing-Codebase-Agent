@@ -21,6 +21,7 @@ self-healer/
 │   │   ├── linter.py    # Runs ruff/mypy/eslint, normalizes issues, detects regressions
 │   │   ├── coverage.py  # Measures line coverage, flags patched lines no test executes
 │   │   ├── journal.py   # Durable per-cycle state snapshots; powers --resume
+│   │   ├── sandbox.py   # Runs the suite in a throwaway copy of the repo
 │   │   └── git.py       # Commit, diff, rollback helpers
 │   ├── state.py         # Blackboard: goal, cycle count, history, status
 │   └── escalation.py    # Generates human-readable failure reports
@@ -54,6 +55,9 @@ python -m healer --target ./repo --test-cmd "pytest" --coverage
 
 # Resume an interrupted run from <target>/.healer/journal.json
 python -m healer --target ./repo --test-cmd "pytest" --resume
+
+# Sandbox: run the suite in a throwaway copy so test side effects never touch the repo
+python -m healer --target ./repo --test-cmd "pytest" --sandbox --sandbox-max-mb 500
 
 # Run healer's own tests
 pytest tests/ -v
@@ -119,6 +123,9 @@ class HealerState:
     coverage_enabled: bool           # Whether the coverage signal is on
     coverage_by_cycle: list[dict]    # Per-cycle rate, delta, untested patch lines
     resumed_from_cycle: int | None   # Cycle this run was resumed from, if any
+    sandbox_enabled: bool            # Whether runs are isolated in a copy
+    sandbox_max_mb: int              # Above this, verify in place instead
+    sandbox_by_cycle: list[dict]     # Per-cycle isolation decision + reason
 ```
 
 **Do not store full file contents in state. Store paths and diffs only.**
@@ -157,6 +164,13 @@ Agents receive only what they need — not the full state object.
   Refuse to resume across a changed repo or test command; the carried-over fingerprints would
   corrupt stall detection. Journal lives in `<target>/.healer/`, kept out of the user's commits
   via `.git/info/exclude` (local-only — never touch a tracked file in the repo being healed).
+- `sandbox.py`: Isolate *both* suite runs (observe and verify), not just verify — otherwise
+  observe is still free to dirty the repo, which is most of what the flag promises to prevent.
+  Rewrite absolute repo paths in the test command, or `pytest /repo/tests` escapes the sandbox
+  and silently tests the real repo. Rewrite sandbox paths back out of test output, or the
+  fixer patches files in a temp dir that no longer exists. Never follow symlinks when copying.
+  Decline (and log) rather than raise when the repo is too big — isolation is an optimisation
+  on safety, never a precondition for healing.
 - `git.py`: Commit after each successful cycle with message `[healer] cycle-N: <short rationale>`. This creates rollback points.
 
 **Before applying any patch: git commit the current state. If the patch breaks things, rollback is one command.**

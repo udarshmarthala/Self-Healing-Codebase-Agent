@@ -169,7 +169,7 @@ def sandbox(
     """
     ignores = tuple(dict.fromkeys(ignores + gitignored_dirs(target_repo)))
     limit_bytes = max_mb * 1024 * 1024
-    files, total = measure_tree(target_repo, ignores, limit_bytes=limit_bytes)
+    _files, total = measure_tree(target_repo, ignores, limit_bytes=limit_bytes)
 
     if total > limit_bytes:
         reason = f"repo exceeds {max_mb} MB (measured at least {total / (1024 * 1024):.0f} MB)"

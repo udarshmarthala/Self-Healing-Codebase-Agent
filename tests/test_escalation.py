@@ -158,3 +158,20 @@ def test_report_notes_a_resumed_run():
     assert "**Resumed From:** cycle 6" in report
     assert "## Run Continuity" in report
     assert ".healer/journal.json" in report
+
+
+def test_report_omits_sandbox_section_when_all_cycles_isolated():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest", sandbox_enabled=True)
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    state.record_sandbox_result(used=True, files=10)
+    assert "## Sandbox" not in generate_report(state, "stall")
+
+
+def test_report_flags_cycles_that_could_not_be_isolated():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest", sandbox_enabled=True)
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    state.cycle = 2
+    state.record_sandbox_result(used=False, reason="repo exceeds 500 MB")
+    report = generate_report(state, "stall")
+    assert "## Sandbox" in report
+    assert "Cycle 2: repo exceeds 500 MB" in report
