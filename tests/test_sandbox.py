@@ -6,6 +6,7 @@ from healer.tools.sandbox import (
     DEFAULT_IGNORES,
     SandboxResult,
     copy_tree,
+    gitignored_dirs,
     is_ignored,
     measure_tree,
     rewrite_failures,
@@ -181,3 +182,23 @@ def test_sandbox_result_summary_when_used():
     result = SandboxResult(path="/tmp/box", used=True, files_copied=3, bytes_copied=1024 * 1024)
     assert "3 file(s)" in result.summary()
     assert "1.0 MB" in result.summary()
+
+
+def test_gitignored_dirs_reads_plain_directory_entries(tmp_path):
+    (tmp_path / ".gitignore").write_text("build/\nfixtures/large/\n*.log\ncache/\n!keep/\n#c/\n")
+    assert gitignored_dirs(str(tmp_path)) == ("build", "cache")
+
+
+def test_gitignored_dirs_without_a_gitignore(tmp_path):
+    assert gitignored_dirs(str(tmp_path)) == ()
+
+
+def test_sandbox_skips_gitignored_directories(tmp_path):
+    repo = build_repo(tmp_path / "repo")
+    (repo / ".gitignore").write_text("scratch/\n")
+    (repo / "scratch").mkdir()
+    (repo / "scratch" / "big.bin").write_text("z" * 5000)
+
+    with sandbox(str(repo)) as box:
+        assert not (Path(box.path) / "scratch").exists()
+        assert (Path(box.path) / "mod.py").exists()

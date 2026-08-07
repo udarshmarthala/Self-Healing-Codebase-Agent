@@ -65,6 +65,41 @@ def is_ignored(name: str, ignores: tuple[str, ...] = DEFAULT_IGNORES) -> bool:
     return name in ignores
 
 
+def gitignored_dirs(target_repo: str) -> tuple[str, ...]:
+    """Directory names the repo's own .gitignore excludes.
+
+    A repo that ignores `fixtures/large/` or a custom venv name knows better
+    than DEFAULT_IGNORES what is regenerable. Only plain directory entries are
+    honoured — full gitignore semantics (globs, negation, nesting) are out of
+    scope, and guessing wrong would silently omit real source files.
+    """
+    gitignore = Path(target_repo) / ".gitignore"
+    if not gitignore.exists():
+        return ()
+
+    try:
+        lines = gitignore.read_text().splitlines()
+    except OSError as e:
+        logger.warning("sandbox: could not read .gitignore — %s", e)
+        return ()
+
+    names: list[str] = []
+    for raw in lines:
+        entry = raw.strip()
+        if not entry or entry.startswith(("#", "!")):
+            continue
+        if not entry.endswith("/"):
+            continue
+        name = entry.rstrip("/")
+        if "/" in name or "*" in name:  # nested or glob — not a plain dir name
+            continue
+        names.append(name)
+
+    if names:
+        logger.info("sandbox: honouring .gitignore dirs %s", names)
+    return tuple(names)
+
+
 def measure_tree(
     source: str,
     ignores: tuple[str, ...] = DEFAULT_IGNORES,
@@ -132,6 +167,7 @@ def sandbox(
     the result reports `used=False` and the caller runs against the real repo.
     Isolation is an optimisation on safety, never a precondition for healing.
     """
+    ignores = tuple(dict.fromkeys(ignores + gitignored_dirs(target_repo)))
     limit_bytes = max_mb * 1024 * 1024
     files, total = measure_tree(target_repo, ignores, limit_bytes=limit_bytes)
 
