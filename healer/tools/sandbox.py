@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -51,3 +53,38 @@ class SandboxResult:
             f"sandbox: {self.files_copied} file(s), "
             f"{self.megabytes:.1f} MB at {self.path}"
         )
+
+
+def is_ignored(name: str, ignores: tuple[str, ...] = DEFAULT_IGNORES) -> bool:
+    return name in ignores
+
+
+def measure_tree(
+    source: str,
+    ignores: tuple[str, ...] = DEFAULT_IGNORES,
+    limit_bytes: int | None = None,
+) -> tuple[int, int]:
+    """Count files and bytes that a copy would move, skipping ignored dirs.
+
+    Stops early once `limit_bytes` is exceeded — the caller only needs to know
+    the repo is too big, and walking a huge tree twice defeats the purpose.
+    """
+    files = 0
+    total = 0
+
+    for root, dirnames, filenames in os.walk(source):
+        dirnames[:] = [d for d in dirnames if not is_ignored(d, ignores)]
+        for name in filenames:
+            path = Path(root) / name
+            if path.is_symlink():
+                files += 1
+                continue
+            try:
+                total += path.stat().st_size
+            except OSError:  # vanished mid-walk, or unreadable
+                continue
+            files += 1
+            if limit_bytes is not None and total > limit_bytes:
+                return files, total
+
+    return files, total
