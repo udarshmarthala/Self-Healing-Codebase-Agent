@@ -11,7 +11,7 @@ from healer.agents.fixer import generate_fix
 from healer.agents.reviewer import review_patch
 from healer.escalation import generate_report, write_report
 from healer.state import HealerState
-from healer.tools import coverage, git, journal, linter, patcher
+from healer.tools import coverage, git, journal, linter, patcher, sandbox
 from healer.tools.runner import run_tests
 
 logger = logging.getLogger(__name__)
@@ -128,8 +128,17 @@ def run(
             _checkpoint(state, run_journal, "rollback", f"apply failed: {e}")
             continue
 
-        # VERIFY — commit only on improvement; otherwise roll back
-        verify = run_tests(state.test_command, state.target_repo)
+        # VERIFY — commit only on improvement; otherwise roll back.
+        # Isolated when enabled: the suite runs against a throwaway copy, so a
+        # test that corrupts state or writes stray files cannot damage the repo
+        # before we have decided whether to keep the patch.
+        if state.sandbox_enabled:
+            verify, box = sandbox.run_tests_isolated(state.test_command, state.target_repo)
+            state.record_sandbox_result(box.used, box.reason, box.files_copied)
+            if not box.used:
+                _console.print(f"[yellow]⚠ {box.summary()}[/yellow]")
+        else:
+            verify = run_tests(state.test_command, state.target_repo)
 
         prev_count = len(result.failures)
         curr_count = len(verify.failures)
