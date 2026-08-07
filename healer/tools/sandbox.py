@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from healer.tools.runner import RunResult, run_tests
+
 logger = logging.getLogger(__name__)
 
 # Directories never worth copying: either regenerable, enormous, or healer's own
@@ -180,3 +182,34 @@ def rewrite_paths(text: str, sandbox_path: str, target_repo: str) -> str:
 
 def rewrite_failures(failures: list[str], sandbox_path: str, target_repo: str) -> list[str]:
     return [rewrite_paths(f, sandbox_path, target_repo) for f in failures]
+
+
+def run_tests_isolated(
+    test_command: str,
+    target_repo: str,
+    timeout: int = 300,
+    max_mb: int = DEFAULT_MAX_MB,
+) -> tuple[RunResult, SandboxResult]:
+    """Run the suite against a throwaway copy of the repo.
+
+    The copy includes uncommitted changes, so this verifies the patch exactly as
+    applied — while leaving the real repo untouched if the suite corrupts state,
+    writes stray files, or the process is killed mid-run.
+    """
+    with sandbox(target_repo, max_mb=max_mb) as box:
+        if not box.used or box.path is None:
+            result = run_tests(test_command, target_repo, timeout=timeout)
+            return result, box
+
+        result = run_tests(test_command, box.path, timeout=timeout)
+        rewritten = RunResult(
+            exit_code=result.exit_code,
+            output=rewrite_paths(result.output, box.path, target_repo),
+            failures=rewrite_failures(result.failures, box.path, target_repo),
+        )
+        logger.info(
+            "sandbox: isolated run exit_code=%d failures=%d",
+            rewritten.exit_code,
+            len(rewritten.failures),
+        )
+        return rewritten, box
