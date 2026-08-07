@@ -12,7 +12,7 @@ from healer.agents.reviewer import review_patch
 from healer.escalation import generate_report, write_report
 from healer.state import HealerState
 from healer.tools import coverage, git, journal, linter, patcher, sandbox
-from healer.tools.runner import run_tests
+from healer.tools.runner import RunResult, run_tests
 
 logger = logging.getLogger(__name__)
 _console = Console()
@@ -49,8 +49,10 @@ def run(
         _console.rule(f"[bold cyan]CYCLE {state.cycle} / {state.max_cycles}[/bold cyan]")
         logger.info("=== CYCLE %d / %d ===", state.cycle, state.max_cycles)
 
-        # OBSERVE
-        result = run_tests(state.test_command, state.target_repo)
+        # OBSERVE — isolated too when enabled. Sandboxing only the verify run
+        # would leave every observe run free to write into the real repo, which
+        # is most of the side effects the flag promises to prevent.
+        result = _observe(state)
         fingerprint = state.record_cycle_result(result.output, result.exit_code, result.failures)
 
         if result.exit_code == 0:
@@ -230,6 +232,20 @@ def _checkpoint(
     """
     run_journal.record(state.cycle, kind, detail)
     run_journal.checkpoint(state.to_dict())
+
+
+def _observe(state: HealerState) -> RunResult:
+    """Run the suite for the OBSERVE phase, isolated when the sandbox is on."""
+    if not state.sandbox_enabled:
+        return run_tests(state.test_command, state.target_repo)
+
+    result, box = sandbox.run_tests_isolated(
+        state.test_command, state.target_repo, max_mb=state.sandbox_max_mb
+    )
+    state.record_sandbox_result(box.used, box.reason, box.files_copied)
+    if not box.used:
+        _console.print(f"[yellow]⚠ {box.summary()}[/yellow]")
+    return result
 
 
 def _lint(state: HealerState) -> linter.LintResult | None:
