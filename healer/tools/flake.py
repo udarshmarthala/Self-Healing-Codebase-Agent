@@ -60,3 +60,25 @@ class FlakeReport:
         if not self.verdicts:
             return "flake: nothing to check"
         return f"flake: {len(self.flaky)} flaky, {len(self.real_failures)} consistent"
+
+
+def supports_selection(test_command: str) -> bool:
+    """Whether single tests can be re-run individually.
+
+    Only pytest node ids are understood. Re-running a whole non-pytest suite
+    would confuse a *different* test failing with the same one flaking.
+    """
+    return "pytest" in test_command
+
+
+def is_node_id(failure: str) -> bool:
+    """pytest node ids look like `tests/test_a.py::test_x`. Anything else is a
+    parsed error line, which cannot be handed back to pytest as a selector."""
+    return "::" in failure and ".py" in failure.split("::")[0]
+
+
+def build_rerun_command(test_command: str, test_id: str) -> str:
+    """Re-run exactly one test, quietly and without the user's own -x/--exitfirst
+    cutting the run short."""
+    base = test_command.replace(" -x", " ").replace(" --exitfirst", " ")
+    return f'{base} "{test_id}" -p no:cacheprovider'
