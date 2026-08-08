@@ -147,3 +147,56 @@ def test_check_failures_caps_the_number_of_tests(tmp_path):
         f"{sys.executable} -m pytest", str(repo), failures, retries=2, max_tests=3
     )
     assert len(report.verdicts) == 3
+
+
+def _flaky_and_broken_repo(root: Path) -> Path:
+    repo = _write_flaky_repo(root)
+    (repo / "test_broken.py").write_text("def test_real(): assert 1 == 2\n")
+    return repo
+
+
+def test_loop_quarantines_flaky_but_keeps_real_failures(tmp_path):
+    from healer.loop import _quarantine_flaky
+    from healer.state import HealerState
+
+    repo = _flaky_and_broken_repo(tmp_path / "repo")
+    state = HealerState(
+        goal="g",
+        target_repo=str(repo),
+        test_command=f"{sys.executable} -m pytest",
+        flake_retries=3,
+    )
+    failures = ["test_flaky.py::test_sometimes", "test_broken.py::test_real"]
+
+    _quarantine_flaky(state, failures)
+
+    assert state.known_flaky == {"test_flaky.py::test_sometimes"}
+    assert state.actionable_failures(failures) == ["test_broken.py::test_real"]
+
+
+def test_quarantine_is_skipped_when_retries_disabled(tmp_path):
+    from healer.loop import _quarantine_flaky
+    from healer.state import HealerState
+
+    repo = _flaky_and_broken_repo(tmp_path / "repo")
+    state = HealerState(
+        goal="g", target_repo=str(repo), test_command=f"{sys.executable} -m pytest", flake_retries=0
+    )
+    _quarantine_flaky(state, ["test_flaky.py::test_sometimes"])
+    assert state.known_flaky == set()
+
+
+def test_quarantine_does_not_recheck_known_flaky(tmp_path):
+    """A test already known to flake must not earn more re-runs each cycle."""
+    from healer.loop import _quarantine_flaky
+    from healer.state import HealerState
+
+    repo = _flaky_and_broken_repo(tmp_path / "repo")
+    state = HealerState(
+        goal="g", target_repo=str(repo), test_command=f"{sys.executable} -m pytest", flake_retries=3
+    )
+    state.record_flake_check(flaky=["test_flaky.py::test_sometimes"], real=[])
+    before = len(state.flake_by_cycle)
+
+    _quarantine_flaky(state, ["test_flaky.py::test_sometimes"])
+    assert len(state.flake_by_cycle) == before  # nothing re-checked
