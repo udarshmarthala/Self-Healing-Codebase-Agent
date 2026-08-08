@@ -43,6 +43,7 @@ def generate_report(state: HealerState, exit_reason: str) -> str:
 
     lines += _lint_section(state)
     lines += _coverage_section(state)
+    lines += _flake_section(state)
     lines += _sandbox_section(state)
     lines += _resume_section(state)
     lines += ["", "## Root Cause Hypothesis", hypothesis]
@@ -148,6 +149,26 @@ def _coverage_section(state: HealerState) -> list[str]:
     return lines
 
 
+def _flake_section(state: HealerState) -> list[str]:
+    """Quarantined tests are the one failure class the healer cannot fix."""
+    if not state.known_flaky:
+        return []
+
+    lines = [
+        "",
+        "## Flaky Tests (quarantined)",
+        "These tests both passed and failed with the code unchanged, so no patch "
+        "can make them reliably pass. The healer stopped trying to fix them:",
+    ]
+    lines += [f"- {test_id}" for test_id in sorted(state.known_flaky)]
+    lines += [
+        "",
+        "Fix the nondeterminism itself — shared state between tests, real clocks, "
+        "network calls, or ordering assumptions.",
+    ]
+    return lines
+
+
 def _sandbox_section(state: HealerState) -> list[str]:
     """Only worth reporting when isolation was requested but not achieved."""
     declined = state.unsandboxed_cycles()
@@ -197,6 +218,11 @@ def _root_cause_hypothesis(state: HealerState) -> str:
 
 
 def _recommended_action(state: HealerState) -> str:
+    if state.known_flaky and not state.patches_applied:
+        return (
+            "No patches were applied because every failure was flaky. Stabilise the "
+            "quarantined tests listed above, then re-run the healer."
+        )
     if not state.patches_applied:
         return "No patches were applied. Check if the test command and target repo path are correct."
 

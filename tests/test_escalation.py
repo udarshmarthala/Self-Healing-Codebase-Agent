@@ -175,3 +175,26 @@ def test_report_flags_cycles_that_could_not_be_isolated():
     report = generate_report(state, "stall")
     assert "## Sandbox" in report
     assert "Cycle 2: repo exceeds 500 MB" in report
+
+
+def test_report_omits_flake_section_when_nothing_quarantined():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    assert "Flaky Tests" not in generate_report(state, "stall")
+
+
+def test_report_lists_quarantined_flaky_tests():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest", flake_retries=3)
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    state.record_flake_check(flaky=["t.py::test_a"], real=[])
+    report = generate_report(state, "only flaky tests failing")
+    assert "## Flaky Tests (quarantined)" in report
+    assert "- t.py::test_a" in report
+    assert "nondeterminism" in report
+
+
+def test_recommended_action_points_at_flakiness_when_no_patches():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest", flake_retries=3)
+    state.record_cycle_result("out", 1, ["t.py::test_a"])
+    state.record_flake_check(flaky=["t.py::test_a"], real=[])
+    assert "Stabilise the" in generate_report(state, "only flaky tests failing")
