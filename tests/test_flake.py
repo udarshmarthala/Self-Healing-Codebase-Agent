@@ -158,6 +158,7 @@ def _flaky_and_broken_repo(root: Path) -> Path:
 def test_loop_quarantines_flaky_but_keeps_real_failures(tmp_path):
     from healer.loop import _quarantine_flaky
     from healer.state import HealerState
+    from healer.tools.journal import Recorder
 
     repo = _flaky_and_broken_repo(tmp_path / "repo")
     state = HealerState(
@@ -168,7 +169,7 @@ def test_loop_quarantines_flaky_but_keeps_real_failures(tmp_path):
     )
     failures = ["test_flaky.py::test_sometimes", "test_broken.py::test_real"]
 
-    _quarantine_flaky(state, failures)
+    _quarantine_flaky(state, failures, Recorder(str(tmp_path / 'j.json')))
 
     assert state.known_flaky == {"test_flaky.py::test_sometimes"}
     assert state.actionable_failures(failures) == ["test_broken.py::test_real"]
@@ -177,12 +178,13 @@ def test_loop_quarantines_flaky_but_keeps_real_failures(tmp_path):
 def test_quarantine_is_skipped_when_retries_disabled(tmp_path):
     from healer.loop import _quarantine_flaky
     from healer.state import HealerState
+    from healer.tools.journal import Recorder
 
     repo = _flaky_and_broken_repo(tmp_path / "repo")
     state = HealerState(
         goal="g", target_repo=str(repo), test_command=f"{sys.executable} -m pytest", flake_retries=0
     )
-    _quarantine_flaky(state, ["test_flaky.py::test_sometimes"])
+    _quarantine_flaky(state, ["test_flaky.py::test_sometimes"], Recorder(str(tmp_path / "j.json")))
     assert state.known_flaky == set()
 
 
@@ -190,6 +192,7 @@ def test_quarantine_does_not_recheck_known_flaky(tmp_path):
     """A test already known to flake must not earn more re-runs each cycle."""
     from healer.loop import _quarantine_flaky
     from healer.state import HealerState
+    from healer.tools.journal import Recorder
 
     repo = _flaky_and_broken_repo(tmp_path / "repo")
     state = HealerState(
@@ -198,5 +201,5 @@ def test_quarantine_does_not_recheck_known_flaky(tmp_path):
     state.record_flake_check(flaky=["test_flaky.py::test_sometimes"], real=[])
     before = len(state.flake_by_cycle)
 
-    _quarantine_flaky(state, ["test_flaky.py::test_sometimes"])
+    _quarantine_flaky(state, ["test_flaky.py::test_sometimes"], Recorder(str(tmp_path / "j.json")))
     assert len(state.flake_by_cycle) == before  # nothing re-checked

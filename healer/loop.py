@@ -66,7 +66,7 @@ def run(
         _console.print(f"[red]✗ {len(result.failures)} failure(s) detected[/red]")
         logger.info("loop: %d failures detected", len(result.failures))
 
-        _quarantine_flaky(state, result.failures)
+        _quarantine_flaky(state, result.failures, run_journal)
         actionable = state.actionable_failures(result.failures)
         if not actionable:
             _console.print(
@@ -243,7 +243,9 @@ def _checkpoint(
     run_journal.checkpoint(state.to_dict())
 
 
-def _quarantine_flaky(state: HealerState, failures: list[str]) -> None:
+def _quarantine_flaky(
+    state: HealerState, failures: list[str], run_journal: journal.Recorder
+) -> None:
     """Re-run failures to separate flaky tests from real ones.
 
     Only unclassified failures are checked — a test already known to flake does
@@ -279,6 +281,12 @@ def _quarantine_flaky(state: HealerState, failures: list[str]) -> None:
         return
 
     state.record_flake_check(report.flaky, report.real_failures)
+    _checkpoint(
+        state,
+        run_journal,
+        "flake",
+        f"{len(report.flaky)} flaky, {len(report.real_failures)} real",
+    )
     if report.flaky:
         _console.print(
             f"[yellow]⚠ {len(report.flaky)} flaky test(s) quarantined — "
