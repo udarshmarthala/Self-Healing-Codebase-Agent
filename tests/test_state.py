@@ -203,3 +203,33 @@ def test_known_flaky_survives_json_roundtrip():
     restored = HealerState.from_dict(json.loads(state.to_json()))
     assert restored.known_flaky == {"t.py::a"}
     assert restored.flake_retries == 3
+
+
+def test_actionable_failures_excludes_known_flaky():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_flake_check(flaky=["t.py::flaky"], real=[])
+    assert state.actionable_failures(["t.py::flaky", "t.py::real"]) == ["t.py::real"]
+
+
+def test_fingerprint_ignores_flaky_churn():
+    """A flaky test flipping in and out must not reset the stall counter."""
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_flake_check(flaky=["t.py::flaky"], real=[])
+
+    with_flake = state.record_cycle_result("out", 1, ["t.py::real", "t.py::flaky"])
+    without_flake = state.record_cycle_result("out", 1, ["t.py::real"])
+    assert with_flake == without_flake
+
+
+def test_stall_detection_survives_a_flapping_test():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_flake_check(flaky=["t.py::flaky"], real=[])
+
+    stalled = False
+    for cycle, failures in enumerate(
+        [["t.py::real"], ["t.py::real", "t.py::flaky"], ["t.py::real"], ["t.py::real"]]
+    ):
+        state.cycle = cycle
+        fp = state.record_cycle_result("out", 1, failures)
+        stalled = state.is_stalled(fp)
+    assert stalled  # the flapping test did not mask the real stall

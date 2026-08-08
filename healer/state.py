@@ -30,12 +30,25 @@ class HealerState:
     known_flaky: set[str] = field(default_factory=set)
     flake_by_cycle: list[dict] = field(default_factory=list)
 
+    def actionable_failures(self, failures: list[str]) -> list[str]:
+        """Failures worth diagnosing — everything except known-flaky tests."""
+        return [f for f in failures if f not in self.known_flaky]
+
     def record_cycle_result(self, test_output: str, exit_code: int, failures: list[str]) -> str:
-        fingerprint = _fingerprint(failures)
+        """Record a cycle's test result.
+
+        The fingerprint is computed over actionable failures only. A flaky test
+        that appears and disappears would otherwise change the fingerprint every
+        cycle, resetting the stall counter and letting the loop churn until it
+        hits max_cycles instead of escalating.
+        """
+        actionable = self.actionable_failures(failures)
+        fingerprint = _fingerprint(actionable)
         entry = {
             "cycle": self.cycle,
             "exit_code": exit_code,
             "failures": failures,
+            "actionable_failures": actionable,
             "fingerprint": fingerprint,
             "output_snippet": test_output[:2000],
         }
