@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from healer.tools.runner import run_tests
+from healer.tools.runner import RunResult, run_tests
 
 logger = logging.getLogger(__name__)
 
@@ -92,13 +93,20 @@ def check_test(
     test_id: str,
     retries: int = DEFAULT_RETRIES,
     timeout: int = 120,
+    runner: Callable[[str, str, int], RunResult] | None = None,
 ) -> FlakeVerdict:
-    """Re-run one failing test against unchanged code and count the passes."""
+    """Re-run one failing test against unchanged code and count the passes.
+
+    `runner` lets the caller supply an isolated executor; flake checking runs
+    the suite retries x failures times, so without isolation it would multiply
+    any test side effects across the repo rather than just repeating them once.
+    """
     command = build_rerun_command(test_command, test_id)
+    execute = runner or (lambda cmd, repo, t: run_tests(cmd, repo, timeout=t))
     passes = 0
 
     for attempt in range(retries):
-        result = run_tests(command, target_repo, timeout=timeout)
+        result = execute(command, target_repo, timeout)
         if result.exit_code == 0:
             passes += 1
         logger.debug(
@@ -116,6 +124,7 @@ def check_failures(
     failures: list[str],
     retries: int = DEFAULT_RETRIES,
     max_tests: int = 10,
+    runner: Callable[[str, str, int], RunResult] | None = None,
 ) -> FlakeReport:
     """Classify each failing test as flaky or consistently failing.
 
@@ -142,7 +151,7 @@ def check_failures(
 
     report = FlakeReport(
         verdicts=[
-            check_test(test_command, target_repo, test_id, retries=retries)
+            check_test(test_command, target_repo, test_id, retries=retries, runner=runner)
             for test_id in selectable
         ]
     )

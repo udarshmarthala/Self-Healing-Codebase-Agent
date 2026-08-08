@@ -257,8 +257,21 @@ def _quarantine_flaky(state: HealerState, failures: list[str]) -> None:
     if not unchecked:
         return
 
+    isolated = None
+    if state.sandbox_enabled:
+
+        def isolated(command: str, repo: str, timeout: int) -> RunResult:
+            result, _box = sandbox.run_tests_isolated(
+                command, repo, timeout=timeout, max_mb=state.sandbox_max_mb
+            )
+            return result
+
     report = flake.check_failures(
-        state.test_command, state.target_repo, unchecked, retries=state.flake_retries
+        state.test_command,
+        state.target_repo,
+        unchecked,
+        retries=state.flake_retries,
+        runner=isolated,
     )
     if not report.checked:
         logger.info("loop: %s", report.summary())
