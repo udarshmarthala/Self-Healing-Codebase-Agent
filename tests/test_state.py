@@ -186,3 +186,20 @@ def test_sandbox_fields_survive_json_roundtrip():
     restored = HealerState.from_dict(json.loads(state.to_json()))
     assert restored.sandbox_enabled
     assert restored.sandbox_by_cycle[0]["reason"] == "copy failed"
+
+
+def test_record_flake_check_accumulates_known_flaky():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest")
+    state.record_flake_check(flaky=["t.py::a"], real=["t.py::b"])
+    state.cycle = 2
+    state.record_flake_check(flaky=["t.py::c"], real=[])
+    assert state.known_flaky == {"t.py::a", "t.py::c"}
+    assert state.flake_by_cycle[0]["real_failures"] == ["t.py::b"]
+
+
+def test_known_flaky_survives_json_roundtrip():
+    state = HealerState(goal="g", target_repo="/tmp/r", test_command="pytest", flake_retries=3)
+    state.record_flake_check(flaky=["t.py::a"], real=[])
+    restored = HealerState.from_dict(json.loads(state.to_json()))
+    assert restored.known_flaky == {"t.py::a"}
+    assert restored.flake_retries == 3

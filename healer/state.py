@@ -26,6 +26,9 @@ class HealerState:
     sandbox_enabled: bool = False
     sandbox_max_mb: int = 500
     sandbox_by_cycle: list[dict] = field(default_factory=list)
+    flake_retries: int = 0
+    known_flaky: set[str] = field(default_factory=set)
+    flake_by_cycle: list[dict] = field(default_factory=list)
 
     def record_cycle_result(self, test_output: str, exit_code: int, failures: list[str]) -> str:
         fingerprint = _fingerprint(failures)
@@ -102,6 +105,20 @@ class HealerState:
             "files_copied": files,
         })
 
+    def record_flake_check(self, flaky: list[str], real: list[str]) -> None:
+        """Record a cycle's flake classification and remember the flaky tests.
+
+        Flaky ids accumulate across cycles: a test that flaked once stays
+        quarantined, since proving it deterministic would take many more runs
+        than proving it flaky.
+        """
+        self.known_flaky.update(flaky)
+        self.flake_by_cycle.append({
+            "cycle": self.cycle,
+            "flaky": sorted(flaky),
+            "real_failures": sorted(real),
+        })
+
     def unsandboxed_cycles(self) -> list[dict]:
         """Cycles verified against the real repo because the sandbox was declined."""
         return [c for c in self.sandbox_by_cycle if not c["used"]]
@@ -125,27 +142,17 @@ class HealerState:
     def is_at_max_cycles(self) -> bool:
         return self.cycle >= self.max_cycles
 
-    def mark_resumed(self) -> None:
-        """Flag this state as continuing an interrupted run.
-
-        Deliberately does not touch `cycle` or `max_cycles`: the cap covers the
-        whole run across resumes, so resuming can never buy extra cycles.
-        """
-        self.resumed_from_cycle = self.cycle
-        self.status = "in_progress"
-
-    def cycles_remaining(self) -> int:
-        return max(self.max_cycles - self.cycle, 0)
-
     def to_dict(self) -> dict:
         d = {k: v for k, v in self.__dict__.items()}
         d["error_fingerprints"] = list(self.error_fingerprints)
+        d["known_flaky"] = sorted(self.known_flaky)
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "HealerState":
         d = dict(d)
         d["error_fingerprints"] = set(d.get("error_fingerprints", []))
+        d["known_flaky"] = set(d.get("known_flaky", []))
         return cls(**d)
 
     def to_json(self) -> str:
