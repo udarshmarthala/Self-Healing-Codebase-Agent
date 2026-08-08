@@ -27,6 +27,7 @@ class HealerState:
     sandbox_max_mb: int = 500
     sandbox_by_cycle: list[dict] = field(default_factory=list)
     flake_retries: int = 0
+    flake_max_tests: int = 10
     known_flaky: set[str] = field(default_factory=set)
     flake_by_cycle: list[dict] = field(default_factory=list)
 

@@ -60,6 +60,14 @@ def main() -> None:
         "and skip trying to fix them (0 disables; 3 is a good starting point)",
     )
     parser.add_argument(
+        "--flake-max-tests",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Cap how many failing tests get re-run per cycle, since the cost is "
+        "retries x tests extra suite runs",
+    )
+    parser.add_argument(
         "--coverage",
         action="store_true",
         help="Measure coverage each cycle and flag patched lines the suite never runs "
@@ -114,6 +122,7 @@ def main() -> None:
             args.sandbox,
             args.sandbox_max_mb,
             args.flake_retries,
+            args.flake_max_tests,
         )
     else:
         state = HealerState(
@@ -126,6 +135,7 @@ def main() -> None:
             sandbox_enabled=args.sandbox,
             sandbox_max_mb=args.sandbox_max_mb,
             flake_retries=args.flake_retries,
+            flake_max_tests=args.flake_max_tests,
         )
 
     final_state = run(state, resumed_events=resumed_events)
@@ -152,6 +162,7 @@ def _resume_state(
     sandbox_enabled: bool,
     sandbox_max_mb: int,
     flake_retries: int,
+    flake_max_tests: int,
 ) -> tuple[HealerState, list[journal.JournalEvent]]:
     """Rebuild state from the journal, or exit with a clear reason why not.
 
@@ -182,6 +193,7 @@ def _resume_state(
     state.sandbox_enabled = sandbox_enabled
     state.sandbox_max_mb = sandbox_max_mb
     state.flake_retries = flake_retries
+    state.flake_max_tests = flake_max_tests
 
     print(f"Resuming from cycle {state.cycle} ({state.cycles_remaining()} cycle(s) left)")
     if saved.events:

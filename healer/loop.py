@@ -271,6 +271,7 @@ def _quarantine_flaky(state: HealerState, failures: list[str]) -> None:
         state.target_repo,
         unchecked,
         retries=state.flake_retries,
+        max_tests=state.flake_max_tests,
         runner=isolated,
     )
     if not report.checked:
