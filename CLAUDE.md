@@ -22,6 +22,7 @@ self-healer/
 │   │   ├── coverage.py  # Measures line coverage, flags patched lines no test executes
 │   │   ├── journal.py   # Durable per-cycle state snapshots; powers --resume
 │   │   ├── sandbox.py   # Runs the suite in a throwaway copy of the repo
+│   │   ├── flake.py     # Re-runs failures to separate flaky tests from real ones
 │   │   └── git.py       # Commit, diff, rollback helpers
 │   ├── state.py         # Blackboard: goal, cycle count, history, status
 │   └── escalation.py    # Generates human-readable failure reports
@@ -58,6 +59,9 @@ python -m healer --target ./repo --test-cmd "pytest" --resume
 
 # Sandbox: run the suite in a throwaway copy so test side effects never touch the repo
 python -m healer --target ./repo --test-cmd "pytest" --sandbox --sandbox-max-mb 500
+
+# Flake detection: re-run failures to avoid burning cycles on nondeterministic tests
+python -m healer --target ./repo --test-cmd "pytest" --flake-retries 3
 
 # Run healer's own tests
 pytest tests/ -v
@@ -126,6 +130,10 @@ class HealerState:
     sandbox_enabled: bool            # Whether runs are isolated in a copy
     sandbox_max_mb: int              # Above this, verify in place instead
     sandbox_by_cycle: list[dict]     # Per-cycle isolation decision + reason
+    flake_retries: int               # Re-runs per failing test; 0 disables
+    flake_max_tests: int             # Cap on tests re-run per cycle
+    known_flaky: set[str]            # Quarantined tests, accumulated across cycles
+    flake_by_cycle: list[dict]       # Per-cycle flaky vs real classification
 ```
 
 **Do not store full file contents in state. Store paths and diffs only.**
@@ -171,6 +179,13 @@ Agents receive only what they need — not the full state object.
   fixer patches files in a temp dir that no longer exists. Never follow symlinks when copying.
   Decline (and log) rather than raise when the repo is too big — isolation is an optimisation
   on safety, never a precondition for healing.
+- `flake.py`: A test that both passes and fails on unchanged code is nondeterministic, not a
+  defect — no patch can fix it, so quarantine it instead of spending cycles on it. Keep flaky
+  ids out of the stall fingerprint: a test flapping in and out changes the fingerprint every
+  cycle, resets the stall counter, and the loop churns to `max_cycles` instead of escalating.
+  Quarantine accumulates and never expires within a run — proving a test deterministic costs
+  far more runs than proving it flaky. Re-runs cost `retries x tests` extra suite invocations,
+  so they are capped and go through the sandbox when it is on.
 - `git.py`: Commit after each successful cycle with message `[healer] cycle-N: <short rationale>`. This creates rollback points.
 
 **Before applying any patch: git commit the current state. If the patch breaks things, rollback is one command.**

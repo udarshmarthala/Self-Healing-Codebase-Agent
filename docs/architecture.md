@@ -87,6 +87,14 @@ Typed dataclass. All inter-cycle memory lives here. Passed by reference; agents 
 - Rewrites paths both ways: repo -> sandbox in the command, sandbox -> repo in output
 - Declines above `--sandbox-max-mb` and falls back to running in place
 
+### tools/flake.py
+- Re-runs each failing test N times against unchanged code
+- Mixed results => flaky (quarantined); all-fail => a real failure to diagnose
+- pytest node ids only — a non-selectable command cannot be checked per test
+- Strips the user's `-x` so an early exit cannot mask a result
+- Uses the sandbox runner when enabled, since it multiplies suite side effects
+- Quarantine is journalled, so `--resume` does not re-pay the cost
+
 ### tools/git.py
 - Thin wrapper over subprocess git
 - `commit`, `diff`, `current_sha`, `rollback_to`, `ensure_git_repo`
