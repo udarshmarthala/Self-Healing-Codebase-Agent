@@ -52,6 +52,14 @@ def main() -> None:
         help="Skip the sandbox for repos larger than this, verifying in place instead",
     )
     parser.add_argument(
+        "--flake-retries",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Re-run each failing test N times to tell flaky tests from real failures "
+        "and skip trying to fix them (0 disables; 3 is a good starting point)",
+    )
+    parser.add_argument(
         "--coverage",
         action="store_true",
         help="Measure coverage each cycle and flag patched lines the suite never runs "
@@ -89,6 +97,12 @@ def main() -> None:
     if args.sandbox:
         print(f"Sandbox: on (max {args.sandbox_max_mb} MB)")
 
+    if 0 < args.flake_retries < 2:
+        print("Flake detection needs at least 2 retries to see a mixed result — disabling")
+        args.flake_retries = 0
+    elif args.flake_retries:
+        print(f"Flake detection: {args.flake_retries} retries per failing test")
+
     resumed_events: list[journal.JournalEvent] = []
 
     if args.resume:
@@ -99,6 +113,7 @@ def main() -> None:
             coverage_enabled,
             args.sandbox,
             args.sandbox_max_mb,
+            args.flake_retries,
         )
     else:
         state = HealerState(
@@ -110,6 +125,7 @@ def main() -> None:
             coverage_enabled=coverage_enabled,
             sandbox_enabled=args.sandbox,
             sandbox_max_mb=args.sandbox_max_mb,
+            flake_retries=args.flake_retries,
         )
 
     final_state = run(state, resumed_events=resumed_events)
@@ -135,6 +151,7 @@ def _resume_state(
     coverage_enabled: bool,
     sandbox_enabled: bool,
     sandbox_max_mb: int,
+    flake_retries: int,
 ) -> tuple[HealerState, list[journal.JournalEvent]]:
     """Rebuild state from the journal, or exit with a clear reason why not.
 
@@ -164,6 +181,7 @@ def _resume_state(
     state.coverage_enabled = coverage_enabled
     state.sandbox_enabled = sandbox_enabled
     state.sandbox_max_mb = sandbox_max_mb
+    state.flake_retries = flake_retries
 
     print(f"Resuming from cycle {state.cycle} ({state.cycles_remaining()} cycle(s) left)")
     if saved.events:
