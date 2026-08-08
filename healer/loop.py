@@ -11,7 +11,7 @@ from healer.agents.fixer import generate_fix
 from healer.agents.reviewer import review_patch
 from healer.escalation import generate_report, write_report
 from healer.state import HealerState
-from healer.tools import coverage, git, journal, linter, patcher, sandbox
+from healer.tools import coverage, flake, git, journal, linter, patcher, sandbox
 from healer.tools.runner import RunResult, run_tests
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,15 @@ def run(
 
         _console.print(f"[red]✗ {len(result.failures)} failure(s) detected[/red]")
         logger.info("loop: %d failures detected", len(result.failures))
+
+        _quarantine_flaky(state, result.failures)
+        actionable = state.actionable_failures(result.failures)
+        if not actionable:
+            _console.print(
+                "[yellow]All remaining failures are known-flaky — nothing to fix[/yellow]"
+            )
+            logger.warning("loop: only flaky failures remain — escalating")
+            return _escalate(state, "only flaky tests failing", run_journal)
         _checkpoint(state, run_journal, "observe", f"{len(result.failures)} failure(s)")
 
         lint_before = _lint(state)
@@ -92,7 +101,7 @@ def run(
         ]
         diagnosis = diagnose(
             test_output=result.output,
-            failures=result.failures,
+            failures=actionable,
             target_repo=state.target_repo,
             previous_diagnoses=previous,
         )
@@ -232,6 +241,37 @@ def _checkpoint(
     """
     run_journal.record(state.cycle, kind, detail)
     run_journal.checkpoint(state.to_dict())
+
+
+def _quarantine_flaky(state: HealerState, failures: list[str]) -> None:
+    """Re-run failures to separate flaky tests from real ones.
+
+    Only unclassified failures are checked — a test already known to flake does
+    not earn more re-runs, and re-running everything each cycle would multiply
+    the suite cost by the retry count.
+    """
+    if state.flake_retries < 2:
+        return
+
+    unchecked = [f for f in failures if f not in state.known_flaky]
+    if not unchecked:
+        return
+
+    report = flake.check_failures(
+        state.test_command, state.target_repo, unchecked, retries=state.flake_retries
+    )
+    if not report.checked:
+        logger.info("loop: %s", report.summary())
+        return
+
+    state.record_flake_check(report.flaky, report.real_failures)
+    if report.flaky:
+        _console.print(
+            f"[yellow]⚠ {len(report.flaky)} flaky test(s) quarantined — "
+            f"not attempting to fix them[/yellow]"
+        )
+        for test_id in report.flaky:
+            logger.warning("loop: quarantined flaky test %s", test_id)
 
 
 def _observe(state: HealerState) -> RunResult:
