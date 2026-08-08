@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from healer.tools.runner import run_tests
+
 logger = logging.getLogger(__name__)
 
 # Re-runs used to tell a flaky test from a genuinely failing one. Three is the
@@ -82,3 +84,67 @@ def build_rerun_command(test_command: str, test_id: str) -> str:
     cutting the run short."""
     base = test_command.replace(" -x", " ").replace(" --exitfirst", " ")
     return f'{base} "{test_id}" -p no:cacheprovider'
+
+
+def check_test(
+    test_command: str,
+    target_repo: str,
+    test_id: str,
+    retries: int = DEFAULT_RETRIES,
+    timeout: int = 120,
+) -> FlakeVerdict:
+    """Re-run one failing test against unchanged code and count the passes."""
+    command = build_rerun_command(test_command, test_id)
+    passes = 0
+
+    for attempt in range(retries):
+        result = run_tests(command, target_repo, timeout=timeout)
+        if result.exit_code == 0:
+            passes += 1
+        logger.debug(
+            "flake: %s attempt %d/%d exit_code=%d", test_id, attempt + 1, retries, result.exit_code
+        )
+
+    verdict = FlakeVerdict(test_id=test_id, runs=retries, passes=passes)
+    logger.info("flake: %s", verdict)
+    return verdict
+
+
+def check_failures(
+    test_command: str,
+    target_repo: str,
+    failures: list[str],
+    retries: int = DEFAULT_RETRIES,
+    max_tests: int = 10,
+) -> FlakeReport:
+    """Classify each failing test as flaky or consistently failing.
+
+    Costs retries x failures suite invocations, so it is capped and only worth
+    running when the loop is about to spend a cycle on these failures.
+    """
+    if retries < 2:
+        return FlakeReport(checked=False, reason="flake detection disabled")
+    if not supports_selection(test_command):
+        return FlakeReport(checked=False, reason=f"{test_command!r} cannot select single tests")
+
+    selectable = [f for f in failures if is_node_id(f)]
+    if not selectable:
+        return FlakeReport(checked=False, reason="no failures look like pytest node ids")
+
+    if len(selectable) > max_tests:
+        logger.info(
+            "flake: %d failures exceeds the %d-test budget — checking the first %d",
+            len(selectable),
+            max_tests,
+            max_tests,
+        )
+        selectable = selectable[:max_tests]
+
+    report = FlakeReport(
+        verdicts=[
+            check_test(test_command, target_repo, test_id, retries=retries)
+            for test_id in selectable
+        ]
+    )
+    logger.info("flake: %s", report.summary())
+    return report
